@@ -1,15 +1,72 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { Presentation, Participant, ResponseSubmission } from '@/types';
 import { getStoreData, saveStoreData } from '@/lib/server-store';
+import { getSupabase, isSupabaseConfigured } from '@/lib/supabase';
+import { DEFAULT_PRESENTATIONS } from '@/lib/default-data';
 
 export async function GET(req: NextRequest) {
   const { searchParams } = new URL(req.url);
   const code = searchParams.get('code');
   const action = searchParams.get('action');
 
-  const store = getStoreData();
+  const supabase = getSupabase();
 
   if (action === 'list') {
+    if (isSupabaseConfigured && supabase) {
+      try {
+        const { data: presList, error } = await supabase
+          .from('presentations')
+          .select('*')
+          .order('created_at', { ascending: false });
+
+        if (presList && !error) {
+          // Check if any default presentations are missing in Supabase and auto-seed them
+          for (const defaultPres of DEFAULT_PRESENTATIONS) {
+            const exists = presList.some((p: any) => p.code === defaultPres.code || p.id === defaultPres.id);
+            if (!exists) {
+              await supabase.from('presentations').upsert({
+                id: defaultPres.id,
+                title: defaultPres.title,
+                code: defaultPres.code,
+                current_question_index: defaultPres.currentQuestionIndex,
+                is_live: defaultPres.isLive,
+                is_locked: defaultPres.isLocked,
+                show_results: defaultPres.showResults,
+                questions: defaultPres.questions,
+                created_at: defaultPres.createdAt,
+                updated_at: new Date().toISOString(),
+              });
+            }
+          }
+
+          const formatted: Presentation[] = presList.map((p: any) => ({
+            id: p.id,
+            title: p.title,
+            code: p.code,
+            currentQuestionIndex: p.current_question_index,
+            isLive: p.is_live,
+            isLocked: p.is_locked,
+            showResults: p.show_results,
+            questions: p.questions,
+            createdAt: p.created_at,
+            updatedAt: p.updated_at,
+          }));
+
+          // Include any default presentation that was just seeded
+          for (const defaultPres of DEFAULT_PRESENTATIONS) {
+            if (!formatted.some((p) => p.code === defaultPres.code)) {
+              formatted.push(defaultPres);
+            }
+          }
+
+          return NextResponse.json({ success: true, presentations: formatted });
+        }
+      } catch (e) {
+        console.warn('Supabase list fetch error:', e);
+      }
+    }
+
+    const store = getStoreData();
     const list = Object.values(store.presentations);
     return NextResponse.json({ success: true, presentations: list });
   }
@@ -18,6 +75,93 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ error: 'Missing room code' }, { status: 400 });
   }
 
+  // Fetch individual presentation
+  if (isSupabaseConfigured && supabase) {
+    try {
+      const { data: pData } = await supabase
+        .from('presentations')
+        .select('*')
+        .eq('code', code)
+        .single();
+
+      if (pData) {
+        const { count: partCount } = await supabase
+          .from('participants')
+          .select('*', { count: 'exact', head: true })
+          .eq('presentation_id', pData.id);
+
+        const { data: respData } = await supabase
+          .from('responses')
+          .select('*')
+          .eq('presentation_id', pData.id);
+
+        const presentation: Presentation = {
+          id: pData.id,
+          title: pData.title,
+          code: pData.code,
+          currentQuestionIndex: pData.current_question_index,
+          isLive: pData.is_live,
+          isLocked: pData.is_locked,
+          showResults: pData.show_results,
+          questions: pData.questions,
+          createdAt: pData.created_at,
+          updatedAt: pData.updated_at,
+        };
+
+        const responses: ResponseSubmission[] = (respData || []).map((r: any) => ({
+          id: r.id,
+          presentationId: r.presentation_id,
+          questionId: r.question_id,
+          participantId: r.participant_id,
+          participantName: r.participant_name,
+          participantWhatsapp: r.participant_whatsapp,
+          participantEmail: r.participant_email,
+          value: r.value,
+          createdAt: r.created_at,
+        }));
+
+        return NextResponse.json({
+          success: true,
+          presentation,
+          participantCount: partCount || 0,
+          responses,
+        });
+      } else {
+        // Auto-seed into Supabase if it exists in DEFAULT_PRESENTATIONS
+        const defaultPres = DEFAULT_PRESENTATIONS.find((dp) => dp.code === code);
+        if (defaultPres) {
+          try {
+            await supabase.from('presentations').upsert({
+              id: defaultPres.id,
+              title: defaultPres.title,
+              code: defaultPres.code,
+              current_question_index: defaultPres.currentQuestionIndex,
+              is_live: defaultPres.isLive,
+              is_locked: defaultPres.isLocked,
+              show_results: defaultPres.showResults,
+              questions: defaultPres.questions,
+              created_at: defaultPres.createdAt,
+              updated_at: new Date().toISOString(),
+            });
+          } catch (e) {
+            console.warn('Auto-seed presentation into Supabase failed:', e);
+          }
+
+          return NextResponse.json({
+            success: true,
+            presentation: defaultPres,
+            participantCount: 0,
+            responses: [],
+          });
+        }
+      }
+    } catch (e) {
+      console.warn('Supabase fetch presentation failed in GET /api/sync:', e);
+    }
+  }
+
+  // Fallback to local store
+  const store = getStoreData();
   const presentation = store.presentations[code];
   if (!presentation) {
     return NextResponse.json({ error: 'Presentation not found' }, { status: 404 });
@@ -43,10 +187,30 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: 'Missing room code' }, { status: 400 });
     }
 
+    const supabase = getSupabase();
     const store = getStoreData();
 
     if (action === 'save_presentation') {
       const presentation: Presentation = body.presentation;
+
+      if (isSupabaseConfigured && supabase) {
+        try {
+          await supabase.from('presentations').upsert({
+            id: presentation.id,
+            title: presentation.title,
+            code: presentation.code,
+            current_question_index: presentation.currentQuestionIndex,
+            is_live: presentation.isLive,
+            is_locked: presentation.isLocked,
+            show_results: presentation.showResults,
+            questions: presentation.questions,
+            updated_at: new Date().toISOString(),
+          });
+        } catch (e) {
+          console.warn('Supabase save presentation failed:', e);
+        }
+      }
+
       store.presentations[code] = presentation;
       if (!store.participants[code]) store.participants[code] = [];
       if (!store.responses[code]) store.responses[code] = [];
@@ -56,6 +220,24 @@ export async function POST(req: NextRequest) {
 
     if (action === 'join') {
       const participant: Participant = body.participant;
+
+      if (isSupabaseConfigured && supabase) {
+        try {
+          await supabase.from('participants').upsert({
+            id: participant.id,
+            presentation_id: participant.presentationId,
+            room_code: participant.roomCode,
+            first_name: participant.firstName,
+            last_name: participant.lastName,
+            whatsapp: participant.whatsapp,
+            email: participant.email,
+            joined_at: participant.joinedAt,
+          });
+        } catch (e) {
+          console.warn('Supabase participant upsert failed:', e);
+        }
+      }
+
       const list = store.participants[code] || [];
       const existingIdx = list.findIndex((p: Participant) => p.id === participant.id);
       if (existingIdx >= 0) {
@@ -70,6 +252,25 @@ export async function POST(req: NextRequest) {
 
     if (action === 'submit_response') {
       const submission: ResponseSubmission = body.submission;
+
+      if (isSupabaseConfigured && supabase) {
+        try {
+          await supabase.from('responses').upsert({
+            id: submission.id,
+            presentation_id: submission.presentationId,
+            question_id: submission.questionId,
+            participant_id: submission.participantId,
+            participant_name: submission.participantName,
+            participant_whatsapp: submission.participantWhatsapp,
+            participant_email: submission.participantEmail,
+            value: submission.value,
+            created_at: submission.createdAt,
+          });
+        } catch (e) {
+          console.warn('Supabase response upsert failed:', e);
+        }
+      }
+
       const list = store.responses[code] || [];
       const existingIdx = list.findIndex(
         (r: ResponseSubmission) =>
@@ -86,26 +287,52 @@ export async function POST(req: NextRequest) {
     }
 
     if (action === 'update_slide') {
+      if (isSupabaseConfigured && supabase) {
+        try {
+          const dbUpdates: any = { updated_at: new Date().toISOString() };
+          if (typeof body.currentQuestionIndex === 'number') {
+            dbUpdates.current_question_index = body.currentQuestionIndex;
+          }
+          if (typeof body.isLocked === 'boolean') {
+            dbUpdates.is_locked = body.isLocked;
+          }
+          if (typeof body.showResults === 'boolean') {
+            dbUpdates.show_results = body.showResults;
+          }
+          await supabase.from('presentations').update(dbUpdates).eq('code', code);
+        } catch (e) {
+          console.warn('Supabase update slide failed:', e);
+        }
+      }
+
       const presentation = store.presentations[code];
-      if (!presentation) {
-        return NextResponse.json({ error: 'Presentation not found' }, { status: 404 });
+      if (presentation) {
+        if (typeof body.currentQuestionIndex === 'number') {
+          presentation.currentQuestionIndex = body.currentQuestionIndex;
+        }
+        if (typeof body.isLocked === 'boolean') {
+          presentation.isLocked = body.isLocked;
+        }
+        if (typeof body.showResults === 'boolean') {
+          presentation.showResults = body.showResults;
+        }
+        presentation.updatedAt = new Date().toISOString();
+        store.presentations[code] = presentation;
+        saveStoreData(store);
       }
-      if (typeof body.currentQuestionIndex === 'number') {
-        presentation.currentQuestionIndex = body.currentQuestionIndex;
-      }
-      if (typeof body.isLocked === 'boolean') {
-        presentation.isLocked = body.isLocked;
-      }
-      if (typeof body.showResults === 'boolean') {
-        presentation.showResults = body.showResults;
-      }
-      presentation.updatedAt = new Date().toISOString();
-      store.presentations[code] = presentation;
-      saveStoreData(store);
-      return NextResponse.json({ success: true, presentation });
+
+      return NextResponse.json({ success: true });
     }
 
     if (action === 'reset_responses') {
+      if (isSupabaseConfigured && supabase) {
+        try {
+          await supabase.from('responses').delete().eq('room_code', code);
+        } catch (e) {
+          console.warn('Supabase reset responses failed:', e);
+        }
+      }
+
       store.responses[code] = [];
       saveStoreData(store);
       return NextResponse.json({ success: true });

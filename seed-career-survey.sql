@@ -1,0 +1,244 @@
+-- Seed SQL for Supabase SQL Editor
+-- This adds or updates the "Career & AI Readiness: Anonymous Opening Survey" in Supabase.
+-- Run this in your Supabase SQL Editor (https://app.supabase.com -> Project -> SQL Editor -> New query)
+
+INSERT INTO presentations (
+  id,
+  title,
+  code,
+  current_question_index,
+  is_live,
+  is_locked,
+  show_results,
+  questions,
+  updated_at
+) VALUES (
+  'career-ai-readiness-survey',
+  'Career & AI Readiness: Anonymous Opening Survey',
+  '902100',
+  0,
+  true,
+  false,
+  true,
+  '[
+    {
+      "id": "cair-q1",
+      "type": "mcq",
+      "title": "How do you feel about starting or building your career?",
+      "description": "MCQ — Select one answer that best reflects your current view.",
+      "guidance": "Opening pulse: Look for the proportion of excitement vs. uncertainty/worry across the room.",
+      "showResultsToAudience": true,
+      "isLocked": false,
+      "options": [
+        { "id": "cair-q1-opt1", "text": "Excited and confident" },
+        { "id": "cair-q1-opt2", "text": "Excited but uncertain" },
+        { "id": "cair-q1-opt3", "text": "Mostly worried" },
+        { "id": "cair-q1-opt4", "text": "Still exploring without much pressure" },
+        { "id": "cair-q1-opt5", "text": "Prefer not to say" }
+      ]
+    },
+    {
+      "id": "cair-q2",
+      "type": "multiple_choice",
+      "title": "Which career concerns are most important to you right now?",
+      "description": "Multiple selection — choose up to 3. (Select \"None of these\" alone if applicable)",
+      "guidance": "If practical experience or AI disruption ranks high, emphasize practical exercises.",
+      "showResultsToAudience": true,
+      "isLocked": false,
+      "maxSelections": 3,
+      "options": [
+        { "id": "cair-q2-opt1", "text": "Finding my first opportunity" },
+        { "id": "cair-q2-opt2", "text": "Choosing a career direction" },
+        { "id": "cair-q2-opt3", "text": "Lacking practical experience" },
+        { "id": "cair-q2-opt4", "text": "Keeping my skills relevant" },
+        { "id": "cair-q2-opt5", "text": "AI changing entry-level opportunities" },
+        { "id": "cair-q2-opt6", "text": "Earning enough" },
+        { "id": "cair-q2-opt7", "text": "Meeting family or social expectations" },
+        { "id": "cair-q2-opt8", "text": "None of these" }
+      ]
+    },
+    {
+      "id": "cair-q3",
+      "type": "mcq",
+      "title": "How clear are you about the career you want?",
+      "description": "MCQ — Select one answer.",
+      "guidance": "If career direction is unclear, spend more time turning interests into specific tasks.",
+      "showResultsToAudience": true,
+      "isLocked": false,
+      "options": [
+        { "id": "cair-q3-opt1", "text": "I have a specific goal and a plan" },
+        { "id": "cair-q3-opt2", "text": "I have a goal but no clear plan" },
+        { "id": "cair-q3-opt3", "text": "I’m considering several options" },
+        { "id": "cair-q3-opt4", "text": "I’m unsure where to start" }
+      ]
+    },
+    {
+      "id": "cair-q4",
+      "type": "multiple_choice",
+      "title": "Which career paths are you currently considering?",
+      "description": "Multiple selection — choose up to 3. (Select \"Still exploring\" alone if applicable)",
+      "guidance": "Compare interest across corporate, entrepreneurship, freelancing, and research.",
+      "showResultsToAudience": true,
+      "isLocked": false,
+      "maxSelections": 3,
+      "options": [
+        { "id": "cair-q4-opt1", "text": "Private-sector employment" },
+        { "id": "cair-q4-opt2", "text": "Government or public service" },
+        { "id": "cair-q4-opt3", "text": "Entrepreneurship or a family business" },
+        { "id": "cair-q4-opt4", "text": "Freelancing or independent consulting" },
+        { "id": "cair-q4-opt5", "text": "Research or academia" },
+        { "id": "cair-q4-opt6", "text": "Nonprofit or social-impact work" },
+        { "id": "cair-q4-opt7", "text": "Still exploring" },
+        { "id": "cair-q4-opt8", "text": "Other" }
+      ]
+    },
+    {
+      "id": "cair-q5",
+      "type": "mcq",
+      "title": "How often have you used an AI tool in the past month?",
+      "description": "MCQ — Select one answer.",
+      "guidance": "Baselines the room’s hands-on exposure to tools like ChatGPT, Claude, Copilot.",
+      "showResultsToAudience": true,
+      "isLocked": false,
+      "options": [
+        { "id": "cair-q5-opt1", "text": "Daily or almost daily" },
+        { "id": "cair-q5-opt2", "text": "A few times a week" },
+        { "id": "cair-q5-opt3", "text": "A few times during the month" },
+        { "id": "cair-q5-opt4", "text": "Once" },
+        { "id": "cair-q5-opt5", "text": "Not at all" }
+      ]
+    },
+    {
+      "id": "cair-q6",
+      "type": "multiple_choice",
+      "title": "What have you used AI for?",
+      "description": "Multiple selection — choose all that apply. (Select \"I haven’t used AI\" alone if applicable)",
+      "guidance": "Check how many participants use AI for active skill creation vs. simple text formatting.",
+      "showResultsToAudience": true,
+      "isLocked": false,
+      "options": [
+        { "id": "cair-q6-opt1", "text": "Understanding a concept" },
+        { "id": "cair-q6-opt2", "text": "Writing or improving text" },
+        { "id": "cair-q6-opt3", "text": "Summarising information" },
+        { "id": "cair-q6-opt4", "text": "Coding or analysing data" },
+        { "id": "cair-q6-opt5", "text": "Creating images or other media" },
+        { "id": "cair-q6-opt6", "text": "Career preparation or job applications" },
+        { "id": "cair-q6-opt7", "text": "Everyday planning or advice" },
+        { "id": "cair-q6-opt8", "text": "I haven’t used AI" }
+      ]
+    },
+    {
+      "id": "cair-q7",
+      "type": "mcq",
+      "title": "Which statement best describes how you currently feel about AI’s effect on your career?",
+      "description": "MCQ — Select one answer.",
+      "guidance": "Observe whether fear, excitement, or nuance (\"Both optimistic and concerned\") dominates.",
+      "showResultsToAudience": true,
+      "isLocked": false,
+      "options": [
+        { "id": "cair-q7-opt1", "text": "Mostly optimistic" },
+        { "id": "cair-q7-opt2", "text": "Mostly concerned" },
+        { "id": "cair-q7-opt3", "text": "Both optimistic and concerned" },
+        { "id": "cair-q7-opt4", "text": "I expect little effect" },
+        { "id": "cair-q7-opt5", "text": "I haven’t formed a view yet" }
+      ]
+    },
+    {
+      "id": "cair-q8",
+      "type": "short_answer",
+      "title": "What is one thing you most want to be able to do after this workshop?",
+      "description": "Short answer — one sentence. Example: \"Use AI to help me learn a skill without becoming dependent on it.\"",
+      "guidance": "Discuss 2-3 prominent patterns and aspirations that appear in the live word cloud.",
+      "showResultsToAudience": true,
+      "isLocked": false
+    },
+    {
+      "id": "cair-q9",
+      "type": "multiple_choice",
+      "title": "What matters most to you in a future career?",
+      "description": "Multiple selection — choose up to 3.",
+      "guidance": "Highlights primary motivators: financial security, autonomy, social impact, or mastery.",
+      "showResultsToAudience": true,
+      "isLocked": false,
+      "maxSelections": 3,
+      "options": [
+        { "id": "cair-q9-opt1", "text": "Financial security" },
+        { "id": "cair-q9-opt2", "text": "High earning potential" },
+        { "id": "cair-q9-opt3", "text": "Meaningful work or social impact" },
+        { "id": "cair-q9-opt4", "text": "Work–life balance" },
+        { "id": "cair-q9-opt5", "text": "Continuous learning" },
+        { "id": "cair-q9-opt6", "text": "Independence" },
+        { "id": "cair-q9-opt7", "text": "Recognition or leadership" },
+        { "id": "cair-q9-opt8", "text": "International opportunities" }
+      ]
+    },
+    {
+      "id": "cair-q10",
+      "type": "mcq",
+      "title": "When AI gives you an answer you plan to use, what do you usually do next?",
+      "description": "MCQ — Select one answer.",
+      "guidance": "If independent verification is rare, emphasize verification and critical evaluation methods.",
+      "showResultsToAudience": true,
+      "isLocked": false,
+      "options": [
+        { "id": "cair-q10-opt1", "text": "Use it with little or no checking" },
+        { "id": "cair-q10-opt2", "text": "Check whether it sounds reasonable" },
+        { "id": "cair-q10-opt3", "text": "Ask the AI to check itself" },
+        { "id": "cair-q10-opt4", "text": "Compare it with independent sources or test it myself" },
+        { "id": "cair-q10-opt5", "text": "It depends on the task" },
+        { "id": "cair-q10-opt6", "text": "I haven’t used AI" }
+      ]
+    },
+    {
+      "id": "cair-q11",
+      "type": "true_false",
+      "title": "True or false for you today: I can name one specific skill I need to develop for the career I want.",
+      "description": "True/False — self-assessment. (There are no right or wrong answers)",
+      "guidance": "Distinguishes tangible skill awareness from general aspiration.",
+      "showResultsToAudience": true,
+      "isLocked": false
+    },
+    {
+      "id": "cair-q12",
+      "type": "true_false",
+      "title": "True or false for you today: I have a regular routine for learning outside my required coursework or job.",
+      "description": "True/False — self-assessment. (There are no right or wrong answers)",
+      "guidance": "If participants can name skills but lack routine, focus closing on a realistic practice schedule.",
+      "showResultsToAudience": true,
+      "isLocked": false
+    },
+    {
+      "id": "cair-q13",
+      "type": "short_answer",
+      "title": "What role, field or problem would you most like to work on?",
+      "description": "Optional Short Answer — A few words; “still exploring” is welcome.",
+      "guidance": "Optional deep dive for domain enthusiasm and target industry clusters.",
+      "showResultsToAudience": true,
+      "isLocked": false
+    },
+    {
+      "id": "cair-q14",
+      "type": "short_answer",
+      "title": "What is your biggest unanswered question about AI and your future?",
+      "description": "Optional Short Answer — One sentence open response.",
+      "guidance": "Optional deep dive to surface burning audience concerns for the closing Q&A.",
+      "showResultsToAudience": true,
+      "isLocked": false
+    },
+    {
+      "id": "cair-q15",
+      "type": "short_answer",
+      "title": "What most often stops you from learning something new?",
+      "description": "Optional Short Answer — A few words, such as time, cost, uncertainty, motivation or access.",
+      "guidance": "Optional deep dive to identify friction points and address them during workshop action planning.",
+      "showResultsToAudience": true,
+      "isLocked": false
+    }
+  ]'::jsonb,
+  NOW()
+)
+ON CONFLICT (id) DO UPDATE SET
+  title = EXCLUDED.title,
+  code = EXCLUDED.code,
+  questions = EXCLUDED.questions,
+  updated_at = NOW();
