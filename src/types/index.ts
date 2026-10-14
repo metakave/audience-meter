@@ -39,6 +39,8 @@ export interface Presentation {
   questions: Question[];
   createdAt: string;
   updatedAt: string;
+  participantCount?: number;
+  responseCount?: number;
 }
 
 export interface Participant {

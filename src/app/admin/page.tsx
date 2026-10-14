@@ -3,7 +3,7 @@
 import React, { useEffect, useState } from 'react';
 import { Presentation } from '@/types';
 import { DEFAULT_PRESENTATIONS } from '@/lib/default-data';
-import { savePresentation } from '@/lib/storage';
+import { savePresentation, deletePresentation } from '@/lib/storage';
 import {
   Plus,
   Play,
@@ -17,6 +17,13 @@ import {
   Sparkles,
   LogOut,
   FileSpreadsheet,
+  AlertTriangle,
+  AlertCircle,
+  Users,
+  BarChart2,
+  X,
+  CheckCircle2,
+  Loader2,
 } from 'lucide-react';
 import ThemeToggle from '@/components/ThemeToggle';
 import AdminGuard, { lockAdminSession } from '@/components/AdminGuard';
@@ -27,6 +34,20 @@ export default function AdminDashboardPage() {
   const [creating, setCreating] = useState(false);
   const [newTitle, setNewTitle] = useState('');
   const [healthStatus, setHealthStatus] = useState<any>(null);
+
+  // Deletion modal state
+  const [deleteModalPres, setDeleteModalPres] = useState<Presentation | null>(null);
+  const [isDeleting, setIsDeleting] = useState(false);
+  const [dataCheck, setDataCheck] = useState<{
+    loading: boolean;
+    participantCount: number;
+    responseCount: number;
+  }>({
+    loading: false,
+    participantCount: 0,
+    responseCount: 0,
+  });
+  const [toastMessage, setToastMessage] = useState<string | null>(null);
 
   useEffect(() => {
     async function checkHealthAndLoad() {
@@ -77,6 +98,8 @@ export default function AdminDashboardPage() {
       showResults: true,
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
+      participantCount: 0,
+      responseCount: 0,
       questions: [
         {
           id: `q_${Date.now()}_1`,
@@ -99,11 +122,58 @@ export default function AdminDashboardPage() {
     setCreating(false);
   };
 
-  const handleDelete = (id: string) => {
-    if (confirm('Are you sure you want to delete this presentation?')) {
-      setPresentations((prev) => prev.filter((p) => p.id !== id));
+  const handleOpenDeleteModal = async (pres: Presentation) => {
+    setDeleteModalPres(pres);
+    const initialParticipants = pres.participantCount ?? 0;
+    const initialResponses = pres.responseCount ?? 0;
+
+    setDataCheck({
+      loading: true,
+      participantCount: initialParticipants,
+      responseCount: initialResponses,
+    });
+
+    try {
+      const res = await fetch(`/api/sync?code=${encodeURIComponent(pres.code)}`);
+      if (res.ok) {
+        const data = await res.json();
+        setDataCheck({
+          loading: false,
+          participantCount: typeof data.participantCount === 'number' ? data.participantCount : initialParticipants,
+          responseCount: Array.isArray(data.responses) ? data.responses.length : initialResponses,
+        });
+      } else {
+        setDataCheck((prev) => ({ ...prev, loading: false }));
+      }
+    } catch {
+      setDataCheck((prev) => ({ ...prev, loading: false }));
     }
   };
+
+  const handleConfirmDelete = async () => {
+    if (!deleteModalPres) return;
+    setIsDeleting(true);
+    const target = deleteModalPres;
+
+    try {
+      const ok = await deletePresentation(target.id, target.code);
+      if (ok) {
+        setPresentations((prev) => prev.filter((p) => p.code !== target.code && p.id !== target.id));
+        setDeleteModalPres(null);
+        setToastMessage(`Deleted "${target.title}" (PIN: ${target.code}) successfully.`);
+        setTimeout(() => setToastMessage(null), 4500);
+      } else {
+        alert('Failed to delete presentation. Please check server logs and try again.');
+      }
+    } catch (err) {
+      console.error('Delete error:', err);
+      alert('An unexpected error occurred while deleting.');
+    } finally {
+      setIsDeleting(false);
+    }
+  };
+
+  const hasData = dataCheck.participantCount > 0 || dataCheck.responseCount > 0;
 
   return (
     <AdminGuard>
@@ -183,182 +253,547 @@ export default function AdminDashboardPage() {
           </div>
         </header>
 
-      {/* New Presentation Modal / Inline Card */}
-      {creating && (
-        <div
-          className="glass-panel"
-          style={{
-            padding: '24px',
-            marginBottom: '32px',
-            border: '1px solid var(--accent-primary)',
-          }}
-        >
-          <h3 style={{ fontSize: '1.2rem', fontWeight: 700, marginBottom: '12px' }}>
-            Create New Presentation
-          </h3>
-          <form onSubmit={handleCreateNew} style={{ display: 'flex', gap: '12px', flexWrap: 'wrap' }}>
-            <input
-              type="text"
-              autoFocus
-              required
-              value={newTitle}
-              onChange={(e) => setNewTitle(e.target.value)}
-              placeholder="e.g. Q3 All-Hands Live Poll & Brainstorming"
-              style={{
-                flex: 1,
-                minWidth: '280px',
-                padding: '12px 16px',
-                background: 'rgba(255, 255, 255, 0.05)',
-                border: '1px solid var(--border-subtle)',
-                borderRadius: '10px',
-                color: '#ffffff',
-                fontSize: '1rem',
-              }}
-            />
-            <button type="submit" className="btn-primary">
-              Create & Add Questions
-            </button>
-            <button
-              type="button"
-              onClick={() => setCreating(false)}
-              className="btn-secondary"
-            >
-              Cancel
-            </button>
-          </form>
-        </div>
-      )}
-
-      {/* Presentations List */}
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(320px, 1fr))', gap: '20px' }}>
-        {presentations.map((pres) => (
+        {/* Toast Feedback */}
+        {toastMessage && (
           <div
-            key={pres.id}
+            style={{
+              position: 'fixed',
+              bottom: '24px',
+              right: '24px',
+              zIndex: 1100,
+              display: 'flex',
+              alignItems: 'center',
+              gap: '10px',
+              background: '#0f172a',
+              color: '#ffffff',
+              padding: '14px 20px',
+              borderRadius: '12px',
+              boxShadow: '0 10px 25px -5px rgba(0, 0, 0, 0.5), 0 0 0 1px rgba(255, 255, 255, 0.1)',
+              fontSize: '0.9rem',
+              fontWeight: 500,
+              animation: 'slideUp 0.25s ease',
+            }}
+          >
+            <CheckCircle2 size={18} color="#10b981" />
+            <span>{toastMessage}</span>
+          </div>
+        )}
+
+        {/* New Presentation Modal / Inline Card */}
+        {creating && (
+          <div
             className="glass-panel"
             style={{
               padding: '24px',
-              display: 'flex',
-              flexDirection: 'column',
-              justifyContent: 'space-between',
-              transition: 'transform 0.2s ease, border-color 0.2s ease',
+              marginBottom: '32px',
+              border: '1px solid var(--accent-primary)',
             }}
           >
-            <div>
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '12px' }}>
-                <span className="code-pill">PIN: {pres.code}</span>
-                <span style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>
-                  {pres.questions.length} {pres.questions.length === 1 ? 'slide' : 'slides'}
-                </span>
-              </div>
+            <h3 style={{ fontSize: '1.2rem', fontWeight: 700, marginBottom: '12px' }}>
+              Create New Presentation
+            </h3>
+            <form onSubmit={handleCreateNew} style={{ display: 'flex', gap: '12px', flexWrap: 'wrap' }}>
+              <input
+                type="text"
+                autoFocus
+                required
+                value={newTitle}
+                onChange={(e) => setNewTitle(e.target.value)}
+                placeholder="e.g. Q3 All-Hands Live Poll & Brainstorming"
+                style={{
+                  flex: 1,
+                  minWidth: '280px',
+                  padding: '12px 16px',
+                  background: 'rgba(255, 255, 255, 0.05)',
+                  border: '1px solid var(--border-subtle)',
+                  borderRadius: '10px',
+                  color: 'inherit',
+                  fontSize: '1rem',
+                }}
+              />
+              <button type="submit" className="btn-primary">
+                Create & Add Questions
+              </button>
+              <button
+                type="button"
+                onClick={() => setCreating(false)}
+                className="btn-secondary"
+              >
+                Cancel
+              </button>
+            </form>
+          </div>
+        )}
 
-              <h2 style={{ fontSize: '1.25rem', fontWeight: 700, marginBottom: '8px', lineHeight: 1.3 }}>
-                {pres.title}
-              </h2>
+        {/* Presentations List */}
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(320px, 1fr))', gap: '20px' }}>
+          {presentations.map((pres) => {
+            const hasDataBadge = (pres.participantCount ?? 0) > 0 || (pres.responseCount ?? 0) > 0;
+            return (
+              <div
+                key={pres.id}
+                className="glass-panel"
+                style={{
+                  padding: '24px',
+                  display: 'flex',
+                  flexDirection: 'column',
+                  justifyContent: 'space-between',
+                  transition: 'transform 0.2s ease, border-color 0.2s ease',
+                  position: 'relative',
+                }}
+              >
+                <div>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
+                    <span className="code-pill">PIN: {pres.code}</span>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                      <span style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>
+                        {pres.questions.length} {pres.questions.length === 1 ? 'slide' : 'slides'}
+                      </span>
+                      {/* Delete Presentation Icon Button */}
+                      <button
+                        type="button"
+                        onClick={() => handleOpenDeleteModal(pres)}
+                        title={`Delete presentation "${pres.title}"`}
+                        aria-label={`Delete presentation "${pres.title}"`}
+                        style={{
+                          display: 'inline-flex',
+                          alignItems: 'center',
+                          justifyContent: 'center',
+                          width: '30px',
+                          height: '30px',
+                          borderRadius: '8px',
+                          border: '1px solid rgba(239, 68, 68, 0.25)',
+                          background: 'rgba(239, 68, 68, 0.08)',
+                          color: '#ef4444',
+                          cursor: 'pointer',
+                          transition: 'all 0.15s ease',
+                          padding: 0,
+                        }}
+                        onMouseEnter={(e) => {
+                          e.currentTarget.style.background = '#ef4444';
+                          e.currentTarget.style.color = '#ffffff';
+                          e.currentTarget.style.borderColor = '#ef4444';
+                          e.currentTarget.style.transform = 'scale(1.08)';
+                        }}
+                        onMouseLeave={(e) => {
+                          e.currentTarget.style.background = 'rgba(239, 68, 68, 0.08)';
+                          e.currentTarget.style.color = '#ef4444';
+                          e.currentTarget.style.borderColor = 'rgba(239, 68, 68, 0.25)';
+                          e.currentTarget.style.transform = 'scale(1)';
+                        }}
+                      >
+                        <Trash2 size={15} />
+                      </button>
+                    </div>
+                  </div>
 
-              <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px', marginBottom: '20px' }}>
-                {pres.questions.slice(0, 3).map((q) => (
-                  <span
-                    key={q.id}
-                    style={{
-                      fontSize: '0.7rem',
-                      textTransform: 'uppercase',
-                      padding: '2px 8px',
-                      borderRadius: '4px',
-                      background: 'rgba(255, 255, 255, 0.06)',
-                      color: 'var(--text-secondary)',
-                      letterSpacing: '0.5px',
-                    }}
-                  >
-                    {q.type.replace('_', ' ')}
-                  </span>
-                ))}
-                {pres.questions.length > 3 && (
-                  <span style={{ fontSize: '0.7rem', color: 'var(--text-muted)', padding: '2px 4px' }}>
-                    +{pres.questions.length - 3} more
-                  </span>
-                )}
-              </div>
-            </div>
+                  <h2 style={{ fontSize: '1.25rem', fontWeight: 700, marginBottom: '8px', lineHeight: 1.3 }}>
+                    {pres.title}
+                  </h2>
 
-            {/* Actions */}
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '10px', paddingTop: '16px', borderTop: '1px solid var(--border-subtle)' }}>
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px' }}>
-                <a
-                  href={`/present/${pres.code}`}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="btn-primary"
-                  style={{ padding: '10px 14px', fontSize: '0.85rem' }}
-                >
-                  <Play size={14} fill="#ffffff" /> Present Live
-                </a>
+                  {/* Existing data status indicator */}
+                  {hasDataBadge && (
+                    <div
+                      style={{
+                        display: 'inline-flex',
+                        alignItems: 'center',
+                        gap: '6px',
+                        fontSize: '0.75rem',
+                        fontWeight: 600,
+                        color: '#10b981',
+                        background: 'rgba(16, 185, 129, 0.1)',
+                        border: '1px solid rgba(16, 185, 129, 0.25)',
+                        padding: '3px 8px',
+                        borderRadius: '6px',
+                        marginBottom: '12px',
+                      }}
+                    >
+                      <Users size={12} />
+                      <span>{pres.participantCount || 0} joined</span>
+                      <span>•</span>
+                      <BarChart2 size={12} />
+                      <span>{pres.responseCount || 0} responses</span>
+                    </div>
+                  )}
 
-                <a
-                  href={`/admin/${pres.id}?code=${pres.code}`}
-                  className="btn-secondary"
-                  style={{ padding: '10px 14px', fontSize: '0.85rem' }}
-                >
-                  <Edit3 size={14} /> Edit Slides
-                </a>
-              </div>
-
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '8px' }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                  <a
-                    href={`/api/export-xlsx/${pres.code}`}
-                    download
-                    title="Download all participants and their responses in Excel (.xlsx) format"
-                    style={{
-                      display: 'inline-flex',
-                      alignItems: 'center',
-                      gap: '5px',
-                      fontSize: '0.8rem',
-                      fontWeight: 600,
-                      color: '#10b981',
-                      padding: '4px 8px',
-                      borderRadius: '6px',
-                      background: 'rgba(16, 185, 129, 0.1)',
-                      border: '1px solid rgba(16, 185, 129, 0.25)',
-                    }}
-                  >
-                    <FileSpreadsheet size={14} /> Download Excel (.xlsx)
-                  </a>
-
-                  <a
-                    href={`/api/export/${pres.code}`}
-                    download
-                    style={{
-                      display: 'inline-flex',
-                      alignItems: 'center',
-                      gap: '4px',
-                      fontSize: '0.78rem',
-                      color: 'var(--text-secondary)',
-                    }}
-                  >
-                    <Download size={13} /> CSV
-                  </a>
+                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px', marginBottom: '20px' }}>
+                    {pres.questions.slice(0, 3).map((q) => (
+                      <span
+                        key={q.id}
+                        style={{
+                          fontSize: '0.7rem',
+                          textTransform: 'uppercase',
+                          padding: '2px 8px',
+                          borderRadius: '4px',
+                          background: 'rgba(255, 255, 255, 0.06)',
+                          color: 'var(--text-secondary)',
+                          letterSpacing: '0.5px',
+                        }}
+                      >
+                        {q.type.replace('_', ' ')}
+                      </span>
+                    ))}
+                    {pres.questions.length > 3 && (
+                      <span style={{ fontSize: '0.7rem', color: 'var(--text-muted)', padding: '2px 4px' }}>
+                        +{pres.questions.length - 3} more
+                      </span>
+                    )}
+                  </div>
                 </div>
 
-                <a
-                  href={`/join/${pres.code}`}
-                  target="_blank"
-                  rel="noopener noreferrer"
+                {/* Actions */}
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '10px', paddingTop: '16px', borderTop: '1px solid var(--border-subtle)' }}>
+                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px' }}>
+                    <a
+                      href={`/present/${pres.code}`}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="btn-primary"
+                      style={{ padding: '10px 14px', fontSize: '0.85rem' }}
+                    >
+                      <Play size={14} fill="#ffffff" /> Present Live
+                    </a>
+
+                    <a
+                      href={`/admin/${pres.id}?code=${pres.code}`}
+                      className="btn-secondary"
+                      style={{ padding: '10px 14px', fontSize: '0.85rem' }}
+                    >
+                      <Edit3 size={14} /> Edit Slides
+                    </a>
+                  </div>
+
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '8px' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                      <a
+                        href={`/api/export-xlsx/${pres.code}`}
+                        download
+                        title="Download all participants and their responses in Excel (.xlsx) format"
+                        style={{
+                          display: 'inline-flex',
+                          alignItems: 'center',
+                          gap: '5px',
+                          fontSize: '0.8rem',
+                          fontWeight: 600,
+                          color: '#10b981',
+                          padding: '4px 8px',
+                          borderRadius: '6px',
+                          background: 'rgba(16, 185, 129, 0.1)',
+                          border: '1px solid rgba(16, 185, 129, 0.25)',
+                        }}
+                      >
+                        <FileSpreadsheet size={14} /> Download Excel (.xlsx)
+                      </a>
+
+                      <a
+                        href={`/api/export/${pres.code}`}
+                        download
+                        style={{
+                          display: 'inline-flex',
+                          alignItems: 'center',
+                          gap: '4px',
+                          fontSize: '0.78rem',
+                          color: 'var(--text-secondary)',
+                        }}
+                      >
+                        <Download size={13} /> CSV
+                      </a>
+                    </div>
+
+                    <a
+                      href={`/join/${pres.code}`}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      style={{
+                        display: 'inline-flex',
+                        alignItems: 'center',
+                        gap: '4px',
+                        fontSize: '0.8rem',
+                        color: '#818cf8',
+                      }}
+                    >
+                      <ExternalLink size={14} /> Test Join Link
+                    </a>
+                  </div>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+
+        {/* Delete Confirmation Modal */}
+        {deleteModalPres && (
+          <div
+            style={{
+              position: 'fixed',
+              top: 0,
+              left: 0,
+              right: 0,
+              bottom: 0,
+              background: 'rgba(0, 0, 0, 0.72)',
+              backdropFilter: 'blur(6px)',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              zIndex: 1200,
+              padding: '20px',
+            }}
+            onClick={(e) => {
+              if (e.target === e.currentTarget && !isDeleting) {
+                setDeleteModalPres(null);
+              }
+            }}
+          >
+            <div
+              className="glass-panel"
+              style={{
+                width: '100%',
+                maxWidth: '520px',
+                padding: '28px',
+                borderRadius: '16px',
+                border: hasData ? '1px solid rgba(239, 68, 68, 0.4)' : '1px solid var(--border-subtle)',
+                boxShadow: '0 25px 50px -12px rgba(0, 0, 0, 0.6)',
+                position: 'relative',
+              }}
+            >
+              {/* Close Button */}
+              <button
+                type="button"
+                disabled={isDeleting}
+                onClick={() => setDeleteModalPres(null)}
+                style={{
+                  position: 'absolute',
+                  top: '20px',
+                  right: '20px',
+                  background: 'transparent',
+                  border: 'none',
+                  color: 'var(--text-muted)',
+                  cursor: isDeleting ? 'not-allowed' : 'pointer',
+                  padding: '4px',
+                }}
+              >
+                <X size={20} />
+              </button>
+
+              {/* Modal Header */}
+              <div style={{ display: 'flex', alignItems: 'center', gap: '14px', marginBottom: '18px' }}>
+                <div
+                  style={{
+                    width: '46px',
+                    height: '46px',
+                    borderRadius: '12px',
+                    background: hasData ? 'rgba(239, 68, 68, 0.15)' : 'rgba(245, 158, 11, 0.15)',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    color: hasData ? '#ef4444' : '#f59e0b',
+                    flexShrink: 0,
+                  }}
+                >
+                  {hasData ? <AlertTriangle size={24} /> : <Trash2 size={24} />}
+                </div>
+                <div>
+                  <h3 style={{ fontSize: '1.25rem', fontWeight: 800, margin: 0, lineHeight: 1.2 }}>
+                    {hasData ? 'Delete Presentation with Data?' : 'Delete Presentation?'}
+                  </h3>
+                  <span style={{ fontSize: '0.82rem', color: 'var(--text-muted)' }}>
+                    PIN: {deleteModalPres.code} • {deleteModalPres.questions.length} slides
+                  </span>
+                </div>
+              </div>
+
+              {/* Presentation Target Title */}
+              <div
+                style={{
+                  padding: '12px 16px',
+                  borderRadius: '10px',
+                  background: 'rgba(255, 255, 255, 0.04)',
+                  border: '1px solid var(--border-subtle)',
+                  marginBottom: '18px',
+                }}
+              >
+                <div style={{ fontSize: '0.78rem', color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
+                  Target Presentation
+                </div>
+                <div style={{ fontSize: '1rem', fontWeight: 700, marginTop: '2px' }}>
+                  {deleteModalPres.title}
+                </div>
+              </div>
+
+              {/* Dynamic Warning Reminder Based on Data Presence */}
+              {dataCheck.loading ? (
+                <div
+                  style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '10px',
+                    padding: '14px 16px',
+                    borderRadius: '10px',
+                    background: 'rgba(255, 255, 255, 0.04)',
+                    color: 'var(--text-secondary)',
+                    fontSize: '0.88rem',
+                    marginBottom: '20px',
+                  }}
+                >
+                  <Loader2 size={16} className="animate-spin" />
+                  <span>Checking audience responses and participant records...</span>
+                </div>
+              ) : hasData ? (
+                <div
+                  style={{
+                    padding: '16px',
+                    borderRadius: '12px',
+                    background: 'rgba(239, 68, 68, 0.1)',
+                    border: '1px solid rgba(239, 68, 68, 0.35)',
+                    marginBottom: '22px',
+                  }}
+                >
+                  <div
+                    style={{
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: '8px',
+                      color: '#ef4444',
+                      fontWeight: 700,
+                      fontSize: '0.92rem',
+                      marginBottom: '8px',
+                    }}
+                  >
+                    <AlertTriangle size={18} />
+                    <span>⚠️ Warning: This presentation is not empty!</span>
+                  </div>
+
+                  <p style={{ fontSize: '0.85rem', color: 'var(--text-primary)', margin: '0 0 12px 0', lineHeight: 1.45 }}>
+                    This presentation already contains live audience data and registrations:
+                  </p>
+
+                  <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap', marginBottom: '12px' }}>
+                    <div
+                      style={{
+                        display: 'inline-flex',
+                        alignItems: 'center',
+                        gap: '6px',
+                        padding: '6px 12px',
+                        borderRadius: '8px',
+                        background: 'rgba(239, 68, 68, 0.18)',
+                        border: '1px solid rgba(239, 68, 68, 0.3)',
+                        fontWeight: 700,
+                        fontSize: '0.85rem',
+                        color: '#ef4444',
+                      }}
+                    >
+                      <Users size={15} />
+                      <span>{dataCheck.participantCount} Registered Participant{dataCheck.participantCount === 1 ? '' : 's'}</span>
+                    </div>
+
+                    <div
+                      style={{
+                        display: 'inline-flex',
+                        alignItems: 'center',
+                        gap: '6px',
+                        padding: '6px 12px',
+                        borderRadius: '8px',
+                        background: 'rgba(239, 68, 68, 0.18)',
+                        border: '1px solid rgba(239, 68, 68, 0.3)',
+                        fontWeight: 700,
+                        fontSize: '0.85rem',
+                        color: '#ef4444',
+                      }}
+                    >
+                      <BarChart2 size={15} />
+                      <span>{dataCheck.responseCount} Audience Response{dataCheck.responseCount === 1 ? '' : 's'}</span>
+                    </div>
+                  </div>
+
+                  <p style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', margin: 0, lineHeight: 1.4 }}>
+                    Permanently deleting will destroy all audience submissions, participant phone/email profiles, and Excel (.xlsx) export records. <strong>This action cannot be undone.</strong>
+                  </p>
+                </div>
+              ) : (
+                <div
+                  style={{
+                    padding: '14px 16px',
+                    borderRadius: '10px',
+                    background: 'rgba(245, 158, 11, 0.08)',
+                    border: '1px solid rgba(245, 158, 11, 0.25)',
+                    marginBottom: '22px',
+                  }}
+                >
+                  <div
+                    style={{
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: '8px',
+                      color: '#f59e0b',
+                      fontWeight: 600,
+                      fontSize: '0.88rem',
+                      marginBottom: '4px',
+                    }}
+                  >
+                    <AlertCircle size={16} />
+                    <span>Empty Presentation</span>
+                  </div>
+                  <p style={{ fontSize: '0.84rem', color: 'var(--text-secondary)', margin: 0, lineHeight: 1.4 }}>
+                    This presentation has no recorded audience responses or participants. Are you sure you want to permanently delete it?
+                  </p>
+                </div>
+              )}
+
+              {/* Action Buttons */}
+              <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '12px' }}>
+                <button
+                  type="button"
+                  disabled={isDeleting}
+                  onClick={() => setDeleteModalPres(null)}
+                  className="btn-secondary"
+                  style={{ padding: '10px 18px', fontSize: '0.9rem' }}
+                >
+                  Cancel
+                </button>
+
+                <button
+                  type="button"
+                  disabled={isDeleting}
+                  onClick={handleConfirmDelete}
                   style={{
                     display: 'inline-flex',
                     alignItems: 'center',
-                    gap: '4px',
-                    fontSize: '0.8rem',
-                    color: '#818cf8',
+                    gap: '8px',
+                    padding: '10px 20px',
+                    borderRadius: '8px',
+                    background: '#ef4444',
+                    color: '#ffffff',
+                    border: 'none',
+                    fontWeight: 700,
+                    fontSize: '0.9rem',
+                    cursor: isDeleting ? 'not-allowed' : 'pointer',
+                    opacity: isDeleting ? 0.7 : 1,
+                    transition: 'all 0.15s ease',
+                  }}
+                  onMouseEnter={(e) => {
+                    if (!isDeleting) e.currentTarget.style.background = '#dc2626';
+                  }}
+                  onMouseLeave={(e) => {
+                    if (!isDeleting) e.currentTarget.style.background = '#ef4444';
                   }}
                 >
-                  <ExternalLink size={14} /> Test Join Link
-                </a>
+                  {isDeleting ? (
+                    <>
+                      <Loader2 size={16} className="animate-spin" />
+                      <span>Deleting...</span>
+                    </>
+                  ) : (
+                    <>
+                      <Trash2 size={16} />
+                      <span>Yes, Delete Presentation</span>
+                    </>
+                  )}
+                </button>
               </div>
             </div>
           </div>
-        ))}
+        )}
       </div>
-    </div>
-  </AdminGuard>
+    </AdminGuard>
   );
 }

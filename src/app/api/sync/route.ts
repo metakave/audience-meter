@@ -20,10 +20,9 @@ export async function GET(req: NextRequest) {
           .order('created_at', { ascending: false });
 
         if (presList && !error) {
-          // Check if any default presentations are missing in Supabase and auto-seed them
-          for (const defaultPres of DEFAULT_PRESENTATIONS) {
-            const exists = presList.some((p: any) => p.code === defaultPres.code || p.id === defaultPres.id);
-            if (!exists) {
+          // If Supabase has zero presentations on initial launch, auto-seed DEFAULT_PRESENTATIONS
+          if (presList.length === 0) {
+            for (const defaultPres of DEFAULT_PRESENTATIONS) {
               await supabase.from('presentations').upsert({
                 id: defaultPres.id,
                 title: defaultPres.title,
@@ -37,7 +36,28 @@ export async function GET(req: NextRequest) {
                 updated_at: new Date().toISOString(),
               });
             }
+            return NextResponse.json({ success: true, presentations: DEFAULT_PRESENTATIONS });
           }
+
+          // Fetch participant and response counts
+          const { data: participantsData } = await supabase
+            .from('participants')
+            .select('presentation_id, room_code');
+          const { data: responsesData } = await supabase
+            .from('responses')
+            .select('presentation_id, room_code');
+
+          const partCountMap: Record<string, number> = {};
+          (participantsData || []).forEach((p: any) => {
+            if (p.presentation_id) partCountMap[p.presentation_id] = (partCountMap[p.presentation_id] || 0) + 1;
+            if (p.room_code) partCountMap[p.room_code] = (partCountMap[p.room_code] || 0) + 1;
+          });
+
+          const respCountMap: Record<string, number> = {};
+          (responsesData || []).forEach((r: any) => {
+            if (r.presentation_id) respCountMap[r.presentation_id] = (respCountMap[r.presentation_id] || 0) + 1;
+            if (r.room_code) respCountMap[r.room_code] = (respCountMap[r.room_code] || 0) + 1;
+          });
 
           const formatted: Presentation[] = presList.map((p: any) => ({
             id: p.id,
@@ -50,14 +70,9 @@ export async function GET(req: NextRequest) {
             questions: p.questions,
             createdAt: p.created_at,
             updatedAt: p.updated_at,
+            participantCount: partCountMap[p.id] ?? partCountMap[p.code] ?? 0,
+            responseCount: respCountMap[p.id] ?? respCountMap[p.code] ?? 0,
           }));
-
-          // Include any default presentation that was just seeded
-          for (const defaultPres of DEFAULT_PRESENTATIONS) {
-            if (!formatted.some((p) => p.code === defaultPres.code)) {
-              formatted.push(defaultPres);
-            }
-          }
 
           return NextResponse.json({ success: true, presentations: formatted });
         }
@@ -67,7 +82,11 @@ export async function GET(req: NextRequest) {
     }
 
     const store = getStoreData();
-    const list = Object.values(store.presentations);
+    const list = Object.values(store.presentations).map((p) => ({
+      ...p,
+      participantCount: (store.participants[p.code] || []).length,
+      responseCount: (store.responses[p.code] || []).length,
+    }));
     return NextResponse.json({ success: true, presentations: list });
   }
 
@@ -127,32 +146,36 @@ export async function GET(req: NextRequest) {
           responses,
         });
       } else {
-        // Auto-seed into Supabase if it exists in DEFAULT_PRESENTATIONS
-        const defaultPres = DEFAULT_PRESENTATIONS.find((dp) => dp.code === code);
-        if (defaultPres) {
-          try {
-            await supabase.from('presentations').upsert({
-              id: defaultPres.id,
-              title: defaultPres.title,
-              code: defaultPres.code,
-              current_question_index: defaultPres.currentQuestionIndex,
-              is_live: defaultPres.isLive,
-              is_locked: defaultPres.isLocked,
-              show_results: defaultPres.showResults,
-              questions: defaultPres.questions,
-              created_at: defaultPres.createdAt,
-              updated_at: new Date().toISOString(),
-            });
-          } catch (e) {
-            console.warn('Auto-seed presentation into Supabase failed:', e);
-          }
+        const store = getStoreData();
+        const wasDeleted = store.deletedCodes?.includes(code);
+        if (!wasDeleted) {
+          // Auto-seed into Supabase if it exists in DEFAULT_PRESENTATIONS
+          const defaultPres = DEFAULT_PRESENTATIONS.find((dp) => dp.code === code);
+          if (defaultPres) {
+            try {
+              await supabase.from('presentations').upsert({
+                id: defaultPres.id,
+                title: defaultPres.title,
+                code: defaultPres.code,
+                current_question_index: defaultPres.currentQuestionIndex,
+                is_live: defaultPres.isLive,
+                is_locked: defaultPres.isLocked,
+                show_results: defaultPres.showResults,
+                questions: defaultPres.questions,
+                created_at: defaultPres.createdAt,
+                updated_at: new Date().toISOString(),
+              });
+            } catch (e) {
+              console.warn('Auto-seed presentation into Supabase failed:', e);
+            }
 
-          return NextResponse.json({
-            success: true,
-            presentation: defaultPres,
-            participantCount: 0,
-            responses: [],
-          });
+            return NextResponse.json({
+              success: true,
+              presentation: defaultPres,
+              participantCount: 0,
+              responses: [],
+            });
+          }
         }
       }
     } catch (e) {
@@ -162,6 +185,9 @@ export async function GET(req: NextRequest) {
 
   // Fallback to local store
   const store = getStoreData();
+  if (store.deletedCodes?.includes(code)) {
+    return NextResponse.json({ error: 'Presentation not found' }, { status: 404 });
+  }
   const presentation = store.presentations[code];
   if (!presentation) {
     return NextResponse.json({ error: 'Presentation not found' }, { status: 404 });
@@ -211,6 +237,9 @@ export async function POST(req: NextRequest) {
         }
       }
 
+      if (store.deletedCodes) {
+        store.deletedCodes = store.deletedCodes.filter((c) => c !== code);
+      }
       store.presentations[code] = presentation;
       if (!store.participants[code]) store.participants[code] = [];
       if (!store.responses[code]) store.responses[code] = [];
@@ -337,6 +366,37 @@ export async function POST(req: NextRequest) {
       }
 
       store.responses[code] = [];
+      saveStoreData(store);
+      return NextResponse.json({ success: true });
+    }
+
+    if (action === 'delete_presentation') {
+      const id = body.id;
+      if (isSupabaseConfigured && supabase) {
+        try {
+          if (id) {
+            await supabase.from('presentations').delete().eq('id', id);
+          }
+          await supabase.from('presentations').delete().eq('code', code);
+          // Also clean up any orphan participants or responses
+          if (id) {
+            await supabase.from('participants').delete().eq('presentation_id', id);
+            await supabase.from('responses').delete().eq('presentation_id', id);
+          }
+          await supabase.from('participants').delete().eq('room_code', code);
+          await supabase.from('responses').delete().eq('room_code', code);
+        } catch (e) {
+          console.warn('Supabase delete presentation failed:', e);
+        }
+      }
+
+      if (!store.deletedCodes) store.deletedCodes = [];
+      if (!store.deletedCodes.includes(code)) {
+        store.deletedCodes.push(code);
+      }
+      delete store.presentations[code];
+      delete store.participants[code];
+      delete store.responses[code];
       saveStoreData(store);
       return NextResponse.json({ success: true });
     }

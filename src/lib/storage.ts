@@ -237,6 +237,45 @@ export async function savePresentation(presentation: Presentation): Promise<bool
 }
 
 /**
+ * Delete a presentation and all associated participants and responses
+ */
+export async function deletePresentation(id: string, code: string): Promise<boolean> {
+  const supabase = getSupabase();
+  if (isSupabaseConfigured && supabase) {
+    try {
+      if (id) {
+        await supabase.from('presentations').delete().eq('id', id);
+      }
+      await supabase.from('presentations').delete().eq('code', code);
+      if (id) {
+        await supabase.from('participants').delete().eq('presentation_id', id);
+        await supabase.from('responses').delete().eq('presentation_id', id);
+      }
+      await supabase.from('participants').delete().eq('room_code', code);
+      await supabase.from('responses').delete().eq('room_code', code);
+    } catch (e) {
+      console.warn('Supabase delete presentation failed:', e);
+    }
+  }
+
+  try {
+    const res = await fetch('/api/sync', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        action: 'delete_presentation',
+        id,
+        code,
+      }),
+    });
+    return res.ok;
+  } catch (err) {
+    console.error('API delete presentation error:', err);
+    return false;
+  }
+}
+
+/**
  * Fetch all responses for a presentation
  */
 export async function fetchResponses(presentationId: string, roomCode: string): Promise<ResponseSubmission[]> {

@@ -7,6 +7,7 @@ interface StoreData {
   presentations: Record<string, Presentation>;
   participants: Record<string, Participant[]>;
   responses: Record<string, ResponseSubmission[]>;
+  deletedCodes?: string[];
 }
 
 const DATA_DIR = path.join(process.cwd(), '.data');
@@ -21,9 +22,10 @@ function ensureDataFile(): StoreData {
       const content = fs.readFileSync(STORE_FILE, 'utf-8');
       if (content) {
         const data: StoreData = JSON.parse(content);
+        if (!data.deletedCodes) data.deletedCodes = [];
         let updated = false;
         for (const pres of DEFAULT_PRESENTATIONS) {
-          if (!data.presentations[pres.code]) {
+          if (!data.presentations[pres.code] && !data.deletedCodes.includes(pres.code)) {
             data.presentations[pres.code] = pres;
             if (!data.participants[pres.code]) data.participants[pres.code] = [];
             if (!data.responses[pres.code]) data.responses[pres.code] = [];
