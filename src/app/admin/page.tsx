@@ -16,6 +16,7 @@ import {
   ExternalLink,
   Sparkles,
   LogOut,
+  FileSpreadsheet,
 } from 'lucide-react';
 import ThemeToggle from '@/components/ThemeToggle';
 import AdminGuard, { lockAdminSession } from '@/components/AdminGuard';
@@ -301,20 +302,42 @@ export default function AdminDashboardPage() {
                 </a>
               </div>
 
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                <a
-                  href={`/api/export/${pres.code}`}
-                  download
-                  style={{
-                    display: 'inline-flex',
-                    alignItems: 'center',
-                    gap: '4px',
-                    fontSize: '0.8rem',
-                    color: 'var(--text-secondary)',
-                  }}
-                >
-                  <Download size={14} /> Export CSV
-                </a>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '8px' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                  <a
+                    href={`/api/export-xlsx/${pres.code}`}
+                    download
+                    title="Download all participants and their responses in Excel (.xlsx) format"
+                    style={{
+                      display: 'inline-flex',
+                      alignItems: 'center',
+                      gap: '5px',
+                      fontSize: '0.8rem',
+                      fontWeight: 600,
+                      color: '#10b981',
+                      padding: '4px 8px',
+                      borderRadius: '6px',
+                      background: 'rgba(16, 185, 129, 0.1)',
+                      border: '1px solid rgba(16, 185, 129, 0.25)',
+                    }}
+                  >
+                    <FileSpreadsheet size={14} /> Download Excel (.xlsx)
+                  </a>
+
+                  <a
+                    href={`/api/export/${pres.code}`}
+                    download
+                    style={{
+                      display: 'inline-flex',
+                      alignItems: 'center',
+                      gap: '4px',
+                      fontSize: '0.78rem',
+                      color: 'var(--text-secondary)',
+                    }}
+                  >
+                    <Download size={13} /> CSV
+                  </a>
+                </div>
 
                 <a
                   href={`/join/${pres.code}`}

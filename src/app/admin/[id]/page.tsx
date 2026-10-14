@@ -18,6 +18,7 @@ import {
   Layers,
   Settings,
   GripVertical,
+  FileSpreadsheet,
 } from 'lucide-react';
 import ThemeToggle from '@/components/ThemeToggle';
 import AdminGuard from '@/components/AdminGuard';
@@ -265,6 +266,15 @@ function EditorContent({ params }: { params: Promise<{ id: string }> }) {
 
         <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
           <ThemeToggle />
+          <a
+            href={`/api/export-xlsx/${presentation.code}`}
+            download
+            className="btn-secondary"
+            title="Download participant details and responses in Excel (.xlsx)"
+            style={{ fontSize: '0.85rem', color: '#10b981', display: 'inline-flex', alignItems: 'center', gap: '6px' }}
+          >
+            <FileSpreadsheet size={15} /> Export Excel
+          </a>
           <button
             onClick={handleSave}
             disabled={saving}

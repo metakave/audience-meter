@@ -32,6 +32,7 @@ import {
   Settings,
   Sparkles,
   MessageSquare,
+  FileSpreadsheet,
 } from 'lucide-react';
 
 function PresenterLiveContent({
@@ -643,6 +644,16 @@ function PresenterLiveContent({
         >
           <Sparkles size={18} />
         </button>
+
+        {/* Excel (.xlsx) Export Button */}
+        <a
+          href={`/api/export-xlsx/${code}`}
+          download
+          title="Download Participants & Responses in Excel (.xlsx)"
+          style={{ padding: '8px', color: '#10b981', display: 'inline-flex' }}
+        >
+          <FileSpreadsheet size={18} />
+        </a>
 
         {/* CSV Export Button */}
         <a
