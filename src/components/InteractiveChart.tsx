@@ -135,13 +135,11 @@ export default function InteractiveChart({ options, totalVotes }: InteractiveCha
         <div
           style={{
             display: 'flex',
-            alignItems: 'flex-end',
+            alignItems: 'flex-start',
             justifyContent: 'space-around',
-            minHeight: '340px',
-            paddingTop: '40px',
+            paddingTop: '24px',
             paddingBottom: '16px',
             gap: '16px',
-            borderBottom: '2px solid var(--border-strong)',
           }}
         >
           {options.map((opt, idx) => {
@@ -159,98 +157,121 @@ export default function InteractiveChart({ options, totalVotes }: InteractiveCha
                   display: 'flex',
                   flexDirection: 'column',
                   alignItems: 'center',
-                  height: '100%',
-                  justifyContent: 'flex-end',
-                  position: 'relative',
                   maxWidth: '140px',
                 }}
               >
-                {/* Floating Percentage Badge on top of column */}
+                {/* Dedicated Bar Track (Upper Stage) */}
                 <div
                   style={{
-                    position: 'absolute',
-                    bottom: `calc(${heightPercent}% + 10px)`,
+                    height: '240px',
+                    width: '100%',
+                    position: 'relative',
                     display: 'flex',
                     flexDirection: 'column',
+                    justifyContent: 'flex-end',
                     alignItems: 'center',
-                    transition: 'bottom 0.7s cubic-bezier(0.34, 1.56, 0.64, 1)',
                   }}
                 >
-                  {isPulsing && (
-                    <span
-                      style={{
-                        position: 'absolute',
-                        top: '-24px',
-                        fontSize: '0.75rem',
-                        fontWeight: 800,
-                        color: '#10b981',
-                        animation: 'floatUp 1s ease-out forwards',
-                      }}
-                    >
-                      +1
-                    </span>
-                  )}
-
-                  <div
-                    style={{
-                      background: isPulsing ? 'var(--accent-primary)' : 'rgba(255, 255, 255, 0.08)',
-                      backdropFilter: 'blur(8px)',
-                      border: '1px solid var(--border-subtle)',
-                      borderRadius: '8px',
-                      padding: '3px 8px',
-                      textAlign: 'center',
-                      boxShadow: isPulsing ? '0 0 16px rgba(99, 102, 241, 0.6)' : 'none',
-                      transition: 'all 0.3s ease',
-                    }}
-                  >
-                    <div style={{ fontSize: '1.05rem', fontWeight: 800, color: 'var(--text-primary)', lineHeight: 1 }}>
-                      {percentage}%
-                    </div>
-                    <div style={{ fontSize: '0.7rem', color: 'var(--text-muted)', marginTop: '2px' }}>
-                      {opt.count} {opt.count === 1 ? 'vote' : 'votes'}
-                    </div>
-                  </div>
-                </div>
-
-                {/* Animated Rising Column Bar */}
-                <div
-                  style={{
-                    width: '100%',
-                    height: `${heightPercent}%`,
-                    minHeight: '18px',
-                    background: gradient,
-                    borderRadius: '12px 12px 4px 4px',
-                    boxShadow: isPulsing
-                      ? '0 0 24px rgba(99, 102, 241, 0.5), inset 0 0 12px rgba(255, 255, 255, 0.4)'
-                      : '0 4px 14px rgba(0, 0, 0, 0.15)',
-                    transition: 'height 0.8s cubic-bezier(0.34, 1.56, 0.64, 1), box-shadow 0.3s ease',
-                    position: 'relative',
-                    overflow: 'hidden',
-                  }}
-                >
-                  {/* Subtle Shimmer Ray */}
+                  {/* Floating Percentage Badge strictly on top of column bar */}
                   <div
                     style={{
                       position: 'absolute',
-                      top: 0,
-                      left: 0,
-                      right: 0,
-                      height: '4px',
-                      background: 'rgba(255, 255, 255, 0.5)',
-                      borderRadius: '12px 12px 0 0',
+                      bottom: `calc(${heightPercent}% + 12px)`,
+                      display: 'flex',
+                      flexDirection: 'column',
+                      alignItems: 'center',
+                      transition: 'bottom 0.7s cubic-bezier(0.34, 1.56, 0.64, 1)',
+                      zIndex: 2,
                     }}
-                  />
+                  >
+                    {isPulsing && (
+                      <span
+                        style={{
+                          position: 'absolute',
+                          top: '-24px',
+                          fontSize: '0.75rem',
+                          fontWeight: 800,
+                          color: '#10b981',
+                          animation: 'floatUp 1s ease-out forwards',
+                        }}
+                      >
+                        +1
+                      </span>
+                    )}
+
+                    <div
+                      style={{
+                        background: isPulsing ? 'var(--accent-primary)' : 'var(--bg-card)',
+                        backdropFilter: 'blur(10px)',
+                        border: '1px solid var(--border-strong)',
+                        borderRadius: '8px',
+                        padding: '4px 8px',
+                        textAlign: 'center',
+                        boxShadow: isPulsing
+                          ? '0 0 16px rgba(99, 102, 241, 0.6)'
+                          : '0 4px 12px rgba(0, 0, 0, 0.08)',
+                        transition: 'all 0.3s ease',
+                      }}
+                    >
+                      <div style={{ fontSize: '1.05rem', fontWeight: 800, color: 'var(--text-primary)', lineHeight: 1 }}>
+                        {percentage}%
+                      </div>
+                      <div style={{ fontSize: '0.7rem', color: 'var(--text-muted)', marginTop: '2px' }}>
+                        {opt.count} {opt.count === 1 ? 'vote' : 'votes'}
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Animated Rising Column Bar */}
+                  <div
+                    style={{
+                      width: '100%',
+                      height: `${heightPercent}%`,
+                      minHeight: '18px',
+                      background: gradient,
+                      borderRadius: '12px 12px 4px 4px',
+                      boxShadow: isPulsing
+                        ? '0 0 24px rgba(99, 102, 241, 0.5), inset 0 0 12px rgba(255, 255, 255, 0.4)'
+                        : '0 4px 14px rgba(0, 0, 0, 0.15)',
+                      transition: 'height 0.8s cubic-bezier(0.34, 1.56, 0.64, 1), box-shadow 0.3s ease',
+                      position: 'relative',
+                      overflow: 'hidden',
+                    }}
+                  >
+                    {/* Subtle Shimmer Ray */}
+                    <div
+                      style={{
+                        position: 'absolute',
+                        top: 0,
+                        left: 0,
+                        right: 0,
+                        height: '4px',
+                        background: 'rgba(255, 255, 255, 0.5)',
+                        borderRadius: '12px 12px 0 0',
+                      }}
+                    />
+                  </div>
                 </div>
 
-                {/* Bottom Option Letter and Label */}
+                {/* Ground Axis Line Separating Column Track from Labels */}
                 <div
                   style={{
-                    marginTop: '12px',
+                    width: '100%',
+                    height: '2px',
+                    background: 'var(--border-strong)',
+                    marginTop: '2px',
+                    marginBottom: '16px',
+                  }}
+                />
+
+                {/* Bottom Option Letter and Label (Generous gap, completely separate from bar track) */}
+                <div
+                  style={{
                     textAlign: 'center',
                     display: 'flex',
                     flexDirection: 'column',
                     alignItems: 'center',
-                    gap: '4px',
+                    gap: '6px',
                   }}
                 >
                   <span
@@ -258,7 +279,8 @@ export default function InteractiveChart({ options, totalVotes }: InteractiveCha
                       width: '28px',
                       height: '28px',
                       borderRadius: '8px',
-                      background: 'rgba(255, 255, 255, 0.08)',
+                      background: 'var(--bg-tertiary)',
+                      border: '1px solid var(--border-subtle)',
                       display: 'inline-flex',
                       alignItems: 'center',
                       justifyContent: 'center',
@@ -274,8 +296,8 @@ export default function InteractiveChart({ options, totalVotes }: InteractiveCha
                       fontSize: '0.85rem',
                       fontWeight: 600,
                       color: 'var(--text-primary)',
-                      lineHeight: 1.25,
-                      maxWidth: '120px',
+                      lineHeight: 1.3,
+                      maxWidth: '130px',
                       wordBreak: 'break-word',
                     }}
                   >
