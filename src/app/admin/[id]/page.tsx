@@ -311,7 +311,7 @@ function EditorContent({ params }: { params: Promise<{ id: string }> }) {
           style={{
             width: '320px',
             borderRight: '1px solid var(--border-subtle)',
-            background: 'rgba(18, 22, 31, 0.5)',
+            background: 'var(--bg-secondary)',
             display: 'flex',
             flexDirection: 'column',
             justifyContent: 'space-between',

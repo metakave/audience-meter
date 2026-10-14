@@ -550,41 +550,54 @@ function ParticipantJoinContent({
     >
       {/* Top Participant Bar */}
       <header
+        className="glass-panel"
         style={{
           display: 'flex',
           alignItems: 'center',
           justifyContent: 'space-between',
           padding: '12px 16px',
-          background: 'rgba(18, 22, 31, 0.8)',
-          backdropFilter: 'blur(12px)',
+          background: 'var(--bg-card)',
+          backdropFilter: 'blur(16px)',
           borderRadius: 'var(--radius-md)',
           border: '1px solid var(--border-subtle)',
+          boxShadow: 'var(--shadow-subtle)',
           marginBottom: '20px',
         }}
       >
-        <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
           <div
             style={{
-              width: '32px',
-              height: '32px',
+              width: '34px',
+              height: '34px',
               borderRadius: '50%',
-              background: 'linear-gradient(135deg, #6366f1, #a855f7)',
+              background: 'linear-gradient(135deg, #6366f1, #8b5cf6)',
               display: 'flex',
               alignItems: 'center',
               justifyContent: 'center',
               color: '#ffffff',
-              fontWeight: 700,
-              fontSize: '0.85rem',
+              fontWeight: 800,
+              fontSize: '0.9rem',
+              boxShadow: '0 2px 8px rgba(99, 102, 241, 0.3)',
             }}
           >
             {participant.firstName.charAt(0).toUpperCase()}
           </div>
           <div>
-            <div style={{ fontSize: '0.9rem', fontWeight: 600, color: 'var(--text-primary)' }}>
+            <div style={{ fontSize: '0.95rem', fontWeight: 700, color: 'var(--text-primary)', lineHeight: 1.2 }}>
               {participant.firstName} {participant.lastName}
             </div>
-            <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>
-              Pin: <span style={{ color: '#a5b4fc', fontFamily: 'var(--font-mono)' }}>{code}</span>
+            <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginTop: '2px', display: 'flex', alignItems: 'center', gap: '4px' }}>
+              <span>Pin:</span>
+              <span
+                style={{
+                  fontFamily: 'var(--font-mono)',
+                  fontWeight: 700,
+                  color: 'var(--accent-primary)',
+                  letterSpacing: '0.5px',
+                }}
+              >
+                {code}
+              </span>
             </div>
           </div>
         </div>
@@ -593,18 +606,23 @@ function ParticipantJoinContent({
           <ThemeToggle compact={true} />
           <button
             onClick={() => setIsEditingProfile(true)}
+            title="Edit profile"
             style={{
               display: 'flex',
               alignItems: 'center',
-              gap: '4px',
-              fontSize: '0.75rem',
-              color: 'var(--text-secondary)',
-              background: 'rgba(255, 255, 255, 0.05)',
-              padding: '6px 10px',
-              borderRadius: '6px',
+              gap: '5px',
+              fontSize: '0.78rem',
+              fontWeight: 600,
+              color: 'var(--text-primary)',
+              background: 'var(--bg-tertiary)',
+              border: '1px solid var(--border-strong)',
+              padding: '6px 12px',
+              borderRadius: '8px',
+              cursor: 'pointer',
+              transition: 'all 0.15s ease',
             }}
           >
-            <Edit2 size={12} /> Edit
+            <Edit2 size={13} color="var(--accent-primary)" /> Edit
           </button>
         </div>
       </header>

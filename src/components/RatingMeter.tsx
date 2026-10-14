@@ -31,7 +31,7 @@ export default function RatingMeter({
         gap: '28px',
         alignItems: 'center',
         padding: '32px',
-        background: 'rgba(18, 22, 31, 0.6)',
+        background: 'var(--bg-card)',
         borderRadius: 'var(--radius-lg)',
         border: '1px solid var(--border-subtle)',
       }}
