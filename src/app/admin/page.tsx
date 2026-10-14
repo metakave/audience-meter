@@ -25,10 +25,19 @@ export default function AdminDashboardPage() {
   const [loading, setLoading] = useState(true);
   const [creating, setCreating] = useState(false);
   const [newTitle, setNewTitle] = useState('');
+  const [healthStatus, setHealthStatus] = useState<any>(null);
 
   useEffect(() => {
-    async function load() {
+    async function checkHealthAndLoad() {
       setLoading(true);
+      try {
+        const healthRes = await fetch('/api/health');
+        if (healthRes.ok) {
+          const healthJson = await healthRes.json();
+          setHealthStatus(healthJson);
+        }
+      } catch {}
+
       try {
         const res = await fetch('/api/sync?action=list');
         if (res.ok) {
@@ -46,7 +55,7 @@ export default function AdminDashboardPage() {
       }
       setLoading(false);
     }
-    load();
+    checkHealthAndLoad();
   }, []);
 
   const handleCreateNew = async (e: React.FormEvent) => {
@@ -117,6 +126,44 @@ export default function AdminDashboardPage() {
             <p style={{ color: 'var(--text-secondary)', fontSize: '0.95rem' }}>
               Manage interactive polls, live slides, and audience responses
             </p>
+            {healthStatus && (
+              <div style={{ marginTop: '8px', display: 'flex', alignItems: 'center', gap: '8px', fontSize: '0.8rem' }}>
+                {healthStatus.status === 'connected' ? (
+                  <span
+                    style={{
+                      display: 'inline-flex',
+                      alignItems: 'center',
+                      gap: '6px',
+                      color: '#10b981',
+                      background: 'rgba(16, 185, 129, 0.1)',
+                      border: '1px solid rgba(16, 185, 129, 0.3)',
+                      padding: '3px 10px',
+                      borderRadius: '9999px',
+                      fontWeight: 600,
+                    }}
+                  >
+                    ● Supabase Realtime Connected
+                  </span>
+                ) : (
+                  <span
+                    style={{
+                      display: 'inline-flex',
+                      alignItems: 'center',
+                      gap: '6px',
+                      color: '#f59e0b',
+                      background: 'rgba(245, 158, 11, 0.1)',
+                      border: '1px solid rgba(245, 158, 11, 0.3)',
+                      padding: '3px 10px',
+                      borderRadius: '9999px',
+                      fontWeight: 600,
+                    }}
+                    title={healthStatus.message}
+                  >
+                    ● Local Sync Engine Active
+                  </span>
+                )}
+              </div>
+            )}
           </div>
 
           <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
