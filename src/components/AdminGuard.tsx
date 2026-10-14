@@ -20,7 +20,7 @@ export function lockAdminSession() {
 }
 
 export default function AdminGuard({ children }: AdminGuardProps) {
-  const [isAuthenticated, setIsAuthenticated] = useState<boolean | null>(null);
+  const [isAuthenticated, setIsAuthenticated] = useState<boolean>(false);
   const [inputPasscode, setInputPasscode] = useState('');
   const [error, setError] = useState('');
 
@@ -28,7 +28,9 @@ export default function AdminGuard({ children }: AdminGuardProps) {
     const isAuth =
       sessionStorage.getItem(AUTH_STORAGE_KEY) === 'true' ||
       localStorage.getItem(AUTH_STORAGE_KEY) === 'true';
-    setIsAuthenticated(isAuth);
+    if (isAuth) {
+      setIsAuthenticated(true);
+    }
   }, []);
 
   const handleUnlock = (e: React.FormEvent) => {
@@ -43,15 +45,6 @@ export default function AdminGuard({ children }: AdminGuardProps) {
       setInputPasscode('');
     }
   };
-
-  // Prevent flicker during initial client check
-  if (isAuthenticated === null) {
-    return (
-      <div style={{ minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-        <p style={{ color: 'var(--text-muted)' }}>Verifying security credentials...</p>
-      </div>
-    );
-  }
 
   if (!isAuthenticated) {
     return (
