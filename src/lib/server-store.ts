@@ -20,7 +20,22 @@ function ensureDataFile(): StoreData {
     if (fs.existsSync(STORE_FILE)) {
       const content = fs.readFileSync(STORE_FILE, 'utf-8');
       if (content) {
-        return JSON.parse(content);
+        const data: StoreData = JSON.parse(content);
+        let updated = false;
+        for (const pres of DEFAULT_PRESENTATIONS) {
+          if (!data.presentations[pres.code]) {
+            data.presentations[pres.code] = pres;
+            if (!data.participants[pres.code]) data.participants[pres.code] = [];
+            if (!data.responses[pres.code]) data.responses[pres.code] = [];
+            updated = true;
+          }
+        }
+        if (updated) {
+          try {
+            fs.writeFileSync(STORE_FILE, JSON.stringify(data, null, 2), 'utf-8');
+          } catch {}
+        }
+        return data;
       }
     }
   } catch (err) {

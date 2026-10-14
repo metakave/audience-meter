@@ -263,11 +263,49 @@ function ParticipantJoinContent({
     setIsSubmitting(false);
   };
 
-  // Toggle multiple choice options
-  const toggleMultiple = (optId: string) => {
-    setSelectedMultiple((prev) =>
-      prev.includes(optId) ? prev.filter((id) => id !== optId) : [...prev, optId]
+  const isExclusiveOption = (text: string) => {
+    const t = text.toLowerCase();
+    return (
+      t.includes('none') ||
+      t.includes('haven’t used ai') ||
+      t.includes('havent used ai') ||
+      t.includes("haven't used ai") ||
+      t.includes('still exploring')
     );
+  };
+
+  // Toggle multiple choice options with exclusive options and limits
+  const toggleMultiple = (optId: string) => {
+    const clickedOpt = currentQuestion?.options?.find((o) => o.id === optId);
+    if (!clickedOpt) return;
+
+    const isClickedExclusive = isExclusiveOption(clickedOpt.text);
+
+    setSelectedMultiple((prev) => {
+      if (prev.includes(optId)) {
+        return prev.filter((id) => id !== optId);
+      }
+
+      // If clicked option is an exclusive option (e.g. None, Still exploring, Haven't used AI), select alone
+      if (isClickedExclusive) {
+        return [optId];
+      }
+
+      // If choosing a standard option, remove any previously selected exclusive options
+      const nonExclusivePrev = prev.filter((id) => {
+        const o = currentQuestion?.options?.find((opt) => opt.id === id);
+        return o ? !isExclusiveOption(o.text) : true;
+      });
+
+      // Check max selections limit
+      const max = currentQuestion?.maxSelections;
+      if (max && nonExclusivePrev.length >= max) {
+        alert(`You can choose up to ${max} options.`);
+        return prev;
+      }
+
+      return [...nonExclusivePrev, optId];
+    });
   };
 
   if (loading) {

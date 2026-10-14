@@ -24,6 +24,8 @@ export interface Question {
   showResultsToAudience?: boolean;  // Host toggle
   isLocked?: boolean;               // Host can freeze submissions
   timerSeconds?: number;            // Optional countdown timer
+  maxSelections?: number;           // For multi-select limits (e.g. choose up to 3)
+  guidance?: string;                // Host facilitation and response guidance
 }
 
 export interface Presentation {

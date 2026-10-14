@@ -389,6 +389,26 @@ function PresenterLiveContent({
                   {currentQuestion.description}
                 </p>
               )}
+
+              {currentQuestion.guidance && (
+                <div
+                  style={{
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    gap: '6px',
+                    marginTop: '12px',
+                    padding: '6px 14px',
+                    borderRadius: '9999px',
+                    background: 'rgba(99, 102, 241, 0.08)',
+                    border: '1px solid rgba(99, 102, 241, 0.25)',
+                    fontSize: '0.85rem',
+                    color: '#818cf8',
+                    fontWeight: 600,
+                  }}
+                >
+                  <Sparkles size={14} color="#818cf8" /> Facilitator Tip: {currentQuestion.guidance}
+                </div>
+              )}
             </div>
 
             {/* Results Presentation Area */}
