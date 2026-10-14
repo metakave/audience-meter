@@ -15,8 +15,10 @@ import {
   Radio,
   ExternalLink,
   Sparkles,
+  LogOut,
 } from 'lucide-react';
 import ThemeToggle from '@/components/ThemeToggle';
+import AdminGuard, { lockAdminSession } from '@/components/AdminGuard';
 
 export default function AdminDashboardPage() {
   const [presentations, setPresentations] = useState<Presentation[]>([]);
@@ -94,35 +96,44 @@ export default function AdminDashboardPage() {
   };
 
   return (
-    <div style={{ minHeight: '100vh', padding: '40px 24px', maxWidth: '1100px', margin: '0 auto' }}>
-      {/* Header */}
-      <header
-        style={{
-          display: 'flex',
-          justifyContent: 'space-between',
-          alignItems: 'center',
-          flexWrap: 'wrap',
-          gap: '16px',
-          marginBottom: '36px',
-        }}
-      >
-        <div>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '4px' }}>
-            <span style={{ fontSize: '1.4rem' }}>⚡</span>
-            <h1 style={{ fontSize: '1.8rem', fontWeight: 800 }}>Presentations Dashboard</h1>
+    <AdminGuard>
+      <div style={{ minHeight: '100vh', padding: '40px 24px', maxWidth: '1100px', margin: '0 auto' }}>
+        {/* Header */}
+        <header
+          style={{
+            display: 'flex',
+            justifyContent: 'space-between',
+            alignItems: 'center',
+            flexWrap: 'wrap',
+            gap: '16px',
+            marginBottom: '36px',
+          }}
+        >
+          <div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '4px' }}>
+              <span style={{ fontSize: '1.4rem' }}>⚡</span>
+              <h1 style={{ fontSize: '1.8rem', fontWeight: 800 }}>Presentations Dashboard</h1>
+            </div>
+            <p style={{ color: 'var(--text-secondary)', fontSize: '0.95rem' }}>
+              Manage interactive polls, live slides, and audience responses
+            </p>
           </div>
-          <p style={{ color: 'var(--text-secondary)', fontSize: '0.95rem' }}>
-            Manage interactive polls, live slides, and audience responses
-          </p>
-        </div>
 
-        <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-          <ThemeToggle />
-          <button onClick={() => setCreating(true)} className="btn-primary">
-            <Plus size={18} /> New Presentation
-          </button>
-        </div>
-      </header>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+            <ThemeToggle />
+            <button onClick={() => setCreating(true)} className="btn-primary">
+              <Plus size={18} /> New Presentation
+            </button>
+            <button
+              onClick={lockAdminSession}
+              title="Lock Admin Session"
+              className="btn-secondary"
+              style={{ padding: '10px 12px', fontSize: '0.85rem', color: 'var(--text-muted)' }}
+            >
+              <LogOut size={16} />
+            </button>
+          </div>
+        </header>
 
       {/* New Presentation Modal / Inline Card */}
       {creating && (
@@ -278,5 +289,6 @@ export default function AdminDashboardPage() {
         ))}
       </div>
     </div>
+  </AdminGuard>
   );
 }

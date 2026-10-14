@@ -20,6 +20,7 @@ import {
   GripVertical,
 } from 'lucide-react';
 import ThemeToggle from '@/components/ThemeToggle';
+import AdminGuard from '@/components/AdminGuard';
 
 const QUESTION_TYPES: { type: QuestionType; label: string; desc: string }[] = [
   { type: 'mcq', label: 'Single Choice (MCQ)', desc: 'Audience picks 1 option with live animated bar chart' },
@@ -680,7 +681,9 @@ export default function PresentationEditorPage({
         </div>
       }
     >
-      <EditorContent params={params} />
+      <AdminGuard>
+        <EditorContent params={params} />
+      </AdminGuard>
     </Suspense>
   );
 }
