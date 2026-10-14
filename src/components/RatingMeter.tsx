@@ -52,7 +52,7 @@ export default function RatingMeter({
       >
         <div style={{ display: 'flex', alignItems: 'center', gap: '8px', color: '#fbbf24', marginBottom: '8px' }}>
           <Star size={32} fill="#fbbf24" />
-          <span style={{ fontSize: '3.6rem', fontWeight: 800, lineHeight: 1, color: '#f8fafc' }}>
+          <span style={{ fontSize: '3.6rem', fontWeight: 800, lineHeight: 1, color: 'var(--text-primary)' }}>
             {average > 0 ? average.toFixed(1) : '—'}
           </span>
         </div>

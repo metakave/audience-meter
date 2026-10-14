@@ -16,6 +16,7 @@ import {
   ExternalLink,
   Sparkles,
 } from 'lucide-react';
+import ThemeToggle from '@/components/ThemeToggle';
 
 export default function AdminDashboardPage() {
   const [presentations, setPresentations] = useState<Presentation[]>([]);
@@ -115,9 +116,12 @@ export default function AdminDashboardPage() {
           </p>
         </div>
 
-        <button onClick={() => setCreating(true)} className="btn-primary">
-          <Plus size={18} /> New Presentation
-        </button>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+          <ThemeToggle />
+          <button onClick={() => setCreating(true)} className="btn-primary">
+            <Plus size={18} /> New Presentation
+          </button>
+        </div>
       </header>
 
       {/* New Presentation Modal / Inline Card */}

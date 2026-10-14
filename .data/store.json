@@ -105,7 +105,18 @@
     }
   },
   "participants": {
-    "824915": []
+    "824915": [
+      {
+        "id": "824915_8801924572887_1791957577648",
+        "presentationId": "demo-interactive-session",
+        "roomCode": "824915",
+        "firstName": "Farhana",
+        "lastName": "Khan",
+        "whatsapp": "+8801924572887",
+        "email": "hello@sadiqalam.com",
+        "joinedAt": "2026-10-14T05:59:37.648Z"
+      }
+    ]
   },
   "responses": {
     "824915": [
@@ -119,6 +130,17 @@
         "participantEmail": "tester@test.com",
         "value": "DualPortMagic",
         "createdAt": "2026-10-14T05:55:00Z"
+      },
+      {
+        "id": "824915_8801924572887_1791957577648_q1-short-answer",
+        "presentationId": "demo-interactive-session",
+        "questionId": "q1-short-answer",
+        "participantId": "824915_8801924572887_1791957577648",
+        "participantName": "Farhana Khan",
+        "participantWhatsapp": "+8801924572887",
+        "participantEmail": "hello@sadiqalam.com",
+        "value": "Sleepy",
+        "createdAt": "2026-10-14T05:59:59.982Z"
       }
     ]
   }

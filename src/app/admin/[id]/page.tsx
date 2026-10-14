@@ -18,6 +18,7 @@ import {
   Layers,
   Settings,
 } from 'lucide-react';
+import ThemeToggle from '@/components/ThemeToggle';
 
 const QUESTION_TYPES: { type: QuestionType; label: string; desc: string }[] = [
   { type: 'mcq', label: 'Single Choice (MCQ)', desc: 'Audience picks 1 option with live animated bar chart' },
@@ -209,7 +210,7 @@ function EditorContent({ params }: { params: Promise<{ id: string }> }) {
               border: 'none',
               fontSize: '1.25rem',
               fontWeight: 800,
-              color: '#ffffff',
+              color: 'var(--text-primary)',
               minWidth: '320px',
             }}
           />
@@ -218,6 +219,7 @@ function EditorContent({ params }: { params: Promise<{ id: string }> }) {
         </div>
 
         <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+          <ThemeToggle />
           <button
             onClick={handleSave}
             disabled={saving}

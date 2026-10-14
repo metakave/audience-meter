@@ -83,7 +83,7 @@ export default function ChartBar({
         </div>
 
         <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-          <span style={{ fontSize: '1.1rem', fontWeight: 700, color: '#f8fafc' }}>
+          <span style={{ fontSize: '1.1rem', fontWeight: 700, color: 'var(--text-primary)' }}>
             {percentage}%
           </span>
           <span style={{ fontSize: '0.85rem', color: 'var(--text-muted)' }}>

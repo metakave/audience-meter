@@ -15,6 +15,7 @@ import {
   Zap,
   Globe,
 } from 'lucide-react';
+import ThemeToggle from '@/components/ThemeToggle';
 
 export default function HomePage() {
   const router = useRouter();
@@ -72,6 +73,7 @@ export default function HomePage() {
         </div>
 
         <div style={{ display: 'flex', alignItems: 'center', gap: '14px' }}>
+          <ThemeToggle />
           <a href="/admin" className="btn-secondary" style={{ padding: '8px 16px', fontSize: '0.85rem' }}>
             <Settings size={15} /> Presenter Dashboard
           </a>

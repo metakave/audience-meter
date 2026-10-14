@@ -3,6 +3,7 @@
 import React, { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { ArrowRight, Radio, KeyRound } from 'lucide-react';
+import ThemeToggle from '@/components/ThemeToggle';
 
 export default function GenericJoinPage() {
   const router = useRouter();
@@ -28,8 +29,13 @@ export default function GenericJoinPage() {
         alignItems: 'center',
         justifyContent: 'center',
         padding: '24px',
+        position: 'relative',
       }}
     >
+      <div style={{ position: 'absolute', top: '24px', right: '24px' }}>
+        <ThemeToggle />
+      </div>
+
       <div
         className="glass-panel"
         style={{

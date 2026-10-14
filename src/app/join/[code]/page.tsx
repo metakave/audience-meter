@@ -24,6 +24,7 @@ import {
   Edit2,
   Radio,
 } from 'lucide-react';
+import ThemeToggle from '@/components/ThemeToggle';
 
 function ParticipantJoinContent({
   params,
@@ -337,7 +338,7 @@ function ParticipantJoinContent({
           }}
         >
           {/* Header */}
-          <div style={{ textAlign: 'center', marginBottom: '24px' }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
             <div
               style={{
                 display: 'inline-flex',
@@ -348,12 +349,15 @@ function ParticipantJoinContent({
                 background: 'rgba(99, 102, 241, 0.1)',
                 padding: '4px 12px',
                 borderRadius: '9999px',
-                marginBottom: '12px',
                 fontWeight: 600,
               }}
             >
               <Radio size={14} className="pulse-dot" /> Live Session #{code}
             </div>
+            <ThemeToggle compact={true} />
+          </div>
+
+          <div style={{ textAlign: 'center', marginBottom: '24px' }}>
             <h1 style={{ fontSize: '1.4rem', fontWeight: 800, color: 'var(--text-primary)', marginBottom: '4px' }}>
               {presentation.title}
             </h1>
@@ -547,21 +551,24 @@ function ParticipantJoinContent({
           </div>
         </div>
 
-        <button
-          onClick={() => setIsEditingProfile(true)}
-          style={{
-            display: 'flex',
-            alignItems: 'center',
-            gap: '4px',
-            fontSize: '0.75rem',
-            color: 'var(--text-secondary)',
-            background: 'rgba(255, 255, 255, 0.05)',
-            padding: '6px 10px',
-            borderRadius: '6px',
-          }}
-        >
-          <Edit2 size={12} /> Edit
-        </button>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+          <ThemeToggle compact={true} />
+          <button
+            onClick={() => setIsEditingProfile(true)}
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: '4px',
+              fontSize: '0.75rem',
+              color: 'var(--text-secondary)',
+              background: 'rgba(255, 255, 255, 0.05)',
+              padding: '6px 10px',
+              borderRadius: '6px',
+            }}
+          >
+            <Edit2 size={12} /> Edit
+          </button>
+        </div>
       </header>
 
       {/* Main Question Card */}

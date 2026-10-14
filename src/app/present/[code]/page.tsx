@@ -13,6 +13,7 @@ import ChartBar from '@/components/ChartBar';
 import WordCloud from '@/components/WordCloud';
 import RatingMeter from '@/components/RatingMeter';
 import QRCodeModal from '@/components/QRCodeModal';
+import ThemeToggle from '@/components/ThemeToggle';
 import confetti from 'canvas-confetti';
 import {
   ChevronLeft,
@@ -267,7 +268,7 @@ function PresenterLiveContent({
               style={{
                 fontSize: '1.1rem',
                 fontWeight: 700,
-                color: '#ffffff',
+                color: 'var(--text-primary)',
                 background: 'rgba(255, 255, 255, 0.08)',
                 padding: '4px 12px',
                 borderRadius: '8px',
@@ -332,6 +333,8 @@ function PresenterLiveContent({
             <span>{aggregated?.totalResponses ?? 0}</span>
             <span style={{ fontWeight: 400, fontSize: '0.8rem', opacity: 0.8 }}>responses</span>
           </div>
+
+          <ThemeToggle />
         </div>
       </header>
 
@@ -371,7 +374,7 @@ function PresenterLiveContent({
                   fontSize: '2.5rem',
                   fontWeight: 800,
                   lineHeight: 1.25,
-                  color: '#ffffff',
+                  color: 'var(--text-primary)',
                   maxWidth: '900px',
                   margin: '0 auto',
                 }}
@@ -463,7 +466,7 @@ function PresenterLiveContent({
                       <div style={{ fontSize: '1.2rem', fontWeight: 700, color: '#34d399', marginBottom: '8px' }}>
                         TRUE
                       </div>
-                      <div style={{ fontSize: '4rem', fontWeight: 800, color: '#ffffff', lineHeight: 1 }}>
+                      <div style={{ fontSize: '4rem', fontWeight: 800, color: 'var(--text-primary)', lineHeight: 1 }}>
                         {aggregated?.totalResponses
                           ? Math.round(
                               ((aggregated.trueFalseCounts?.trueCount ?? 0) /
@@ -491,7 +494,7 @@ function PresenterLiveContent({
                       <div style={{ fontSize: '1.2rem', fontWeight: 700, color: '#f87171', marginBottom: '8px' }}>
                         FALSE
                       </div>
-                      <div style={{ fontSize: '4rem', fontWeight: 800, color: '#ffffff', lineHeight: 1 }}>
+                      <div style={{ fontSize: '4rem', fontWeight: 800, color: 'var(--text-primary)', lineHeight: 1 }}>
                         {aggregated?.totalResponses
                           ? Math.round(
                               ((aggregated.trueFalseCounts?.falseCount ?? 0) /
