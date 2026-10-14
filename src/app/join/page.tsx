@@ -102,10 +102,10 @@ export default function GenericJoinPage() {
                 fontSize: '1.6rem',
                 letterSpacing: '4px',
                 fontWeight: 700,
-                background: 'rgba(255, 255, 255, 0.04)',
+                background: 'var(--bg-tertiary)',
                 border: '2px solid var(--border-subtle)',
                 borderRadius: '14px',
-                color: '#f8fafc',
+                color: 'var(--text-primary)',
               }}
             />
           </div>

@@ -9,18 +9,19 @@ interface ThemeToggleProps {
 }
 
 export default function ThemeToggle({ compact = false, className = '' }: ThemeToggleProps) {
-  const [theme, setTheme] = useState<'dark' | 'light'>('dark');
+  const [theme, setTheme] = useState<'dark' | 'light'>('light');
   const [mounted, setMounted] = useState(false);
 
   useEffect(() => {
     setMounted(true);
     const saved = localStorage.getItem('audiencemeter_theme');
-    if (saved === 'light' || saved === 'dark') {
+    if (saved === 'dark' || saved === 'light') {
       setTheme(saved);
       document.documentElement.setAttribute('data-theme', saved);
     } else {
-      // Default to dark
-      document.documentElement.setAttribute('data-theme', 'dark');
+      // Default to light mode
+      setTheme('light');
+      document.documentElement.setAttribute('data-theme', 'light');
     }
   }, []);
 

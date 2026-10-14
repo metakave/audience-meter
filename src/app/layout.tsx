@@ -12,7 +12,7 @@ export default function RootLayout({
   children: React.ReactNode;
 }) {
   return (
-    <html lang="en">
+    <html lang="en" data-theme="light">
       <head>
         <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no" />
         <link
@@ -24,10 +24,14 @@ export default function RootLayout({
             __html: `
               try {
                 const saved = localStorage.getItem('audiencemeter_theme');
-                if (saved) {
+                if (saved === 'dark' || saved === 'light') {
                   document.documentElement.setAttribute('data-theme', saved);
+                } else {
+                  document.documentElement.setAttribute('data-theme', 'light');
                 }
-              } catch (e) {}
+              } catch (e) {
+                document.documentElement.setAttribute('data-theme', 'light');
+              }
             `,
           }}
         />

@@ -398,10 +398,10 @@ function ParticipantJoinContent({
                     style={{
                       width: '100%',
                       padding: '12px 14px',
-                      background: 'rgba(255, 255, 255, 0.04)',
+                      background: 'var(--bg-tertiary)',
                       border: '1px solid var(--border-subtle)',
                       borderRadius: '10px',
-                      color: '#ffffff',
+                      color: 'var(--text-primary)',
                       fontSize: '0.95rem',
                     }}
                   />
@@ -420,10 +420,10 @@ function ParticipantJoinContent({
                   style={{
                     width: '100%',
                     padding: '12px 14px',
-                    background: 'rgba(255, 255, 255, 0.04)',
+                    background: 'var(--bg-tertiary)',
                     border: '1px solid var(--border-subtle)',
                     borderRadius: '10px',
-                    color: '#ffffff',
+                    color: 'var(--text-primary)',
                     fontSize: '0.95rem',
                   }}
                 />
@@ -444,10 +444,10 @@ function ParticipantJoinContent({
                   style={{
                     width: '100%',
                     padding: '12px 14px 12px 38px',
-                    background: 'rgba(255, 255, 255, 0.04)',
+                    background: 'var(--bg-tertiary)',
                     border: '1px solid var(--border-subtle)',
                     borderRadius: '10px',
-                    color: '#ffffff',
+                    color: 'var(--text-primary)',
                     fontSize: '0.95rem',
                   }}
                 />
@@ -469,10 +469,10 @@ function ParticipantJoinContent({
                   style={{
                     width: '100%',
                     padding: '12px 14px 12px 38px',
-                    background: 'rgba(255, 255, 255, 0.04)',
+                    background: 'var(--bg-tertiary)',
                     border: '1px solid var(--border-subtle)',
                     borderRadius: '10px',
-                    color: '#ffffff',
+                    color: 'var(--text-primary)',
                     fontSize: '0.95rem',
                   }}
                 />
@@ -815,10 +815,10 @@ function ParticipantJoinContent({
                   style={{
                     width: '100%',
                     padding: '16px 18px',
-                    background: 'rgba(255, 255, 255, 0.05)',
+                    background: 'var(--bg-tertiary)',
                     border: '2px solid var(--border-subtle)',
                     borderRadius: '12px',
-                    color: '#ffffff',
+                    color: 'var(--text-primary)',
                     fontSize: '1.1rem',
                   }}
                 />
@@ -852,10 +852,10 @@ function ParticipantJoinContent({
                   style={{
                     width: '100%',
                     padding: '16px 18px',
-                    background: 'rgba(255, 255, 255, 0.05)',
+                    background: 'var(--bg-tertiary)',
                     border: '2px solid var(--border-subtle)',
                     borderRadius: '12px',
-                    color: '#ffffff',
+                    color: 'var(--text-primary)',
                     fontSize: '1rem',
                     lineHeight: 1.5,
                     resize: 'none',
