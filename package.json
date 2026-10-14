@@ -4,6 +4,8 @@
   "private": true,
   "scripts": {
     "dev": "next dev",
+    "dev:dual": "node scripts/participant-gateway.js & next dev",
+    "gateway": "node scripts/participant-gateway.js",
     "build": "next build",
     "start": "next start",
     "lint": "eslint"

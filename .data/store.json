@@ -1,0 +1,125 @@
+{
+  "presentations": {
+    "824915": {
+      "id": "demo-interactive-session",
+      "title": "Audience Pulse & Interactive Q&A",
+      "code": "824915",
+      "currentQuestionIndex": 0,
+      "isLive": true,
+      "isLocked": false,
+      "showResults": true,
+      "createdAt": "2026-10-14T05:23:20.827Z",
+      "updatedAt": "2026-10-14T05:23:20.827Z",
+      "questions": [
+        {
+          "id": "q1-short-answer",
+          "type": "short_answer",
+          "title": "In ONE word, how are you feeling about today’s session?",
+          "description": "Submit your word to build our live interactive word cloud.",
+          "showResultsToAudience": true,
+          "isLocked": false
+        },
+        {
+          "id": "q2-mcq",
+          "type": "mcq",
+          "title": "Which tech topic are you most excited to master this year?",
+          "description": "Single choice vote",
+          "showResultsToAudience": true,
+          "isLocked": false,
+          "options": [
+            {
+              "id": "opt-ai",
+              "text": "Generative AI & Agentic Workflows"
+            },
+            {
+              "id": "opt-cloud",
+              "text": "Serverless & Cloud Architecture"
+            },
+            {
+              "id": "opt-fullstack",
+              "text": "Full-Stack Next.js & React 19"
+            },
+            {
+              "id": "opt-mobile",
+              "text": "Mobile & Realtime Applications"
+            }
+          ]
+        },
+        {
+          "id": "q3-multiple-choice",
+          "type": "multiple_choice",
+          "title": "Which communication channels do you check daily? (Select all that apply)",
+          "description": "Multiple selections allowed",
+          "showResultsToAudience": true,
+          "isLocked": false,
+          "options": [
+            {
+              "id": "c-whatsapp",
+              "text": "WhatsApp"
+            },
+            {
+              "id": "c-email",
+              "text": "Email"
+            },
+            {
+              "id": "c-linkedin",
+              "text": "LinkedIn"
+            },
+            {
+              "id": "c-slack",
+              "text": "Slack / Discord"
+            },
+            {
+              "id": "c-telegram",
+              "text": "Telegram"
+            }
+          ]
+        },
+        {
+          "id": "q4-true-false",
+          "type": "true_false",
+          "title": "Real-time audience interaction improves workshop engagement by over 80%.",
+          "description": "Instant pulse check",
+          "showResultsToAudience": true,
+          "isLocked": false
+        },
+        {
+          "id": "q5-rating-scale",
+          "type": "rating_scale",
+          "title": "How would you rate the speed & smoothness of this live poll?",
+          "description": "Rate from 1 (Poor) to 5 (Outstanding)",
+          "minRating": 1,
+          "maxRating": 5,
+          "showResultsToAudience": true,
+          "isLocked": false
+        },
+        {
+          "id": "q6-long-answer",
+          "type": "long_answer",
+          "title": "What questions or topics would you like covered next?",
+          "description": "Share your detailed feedback or questions with the speaker.",
+          "showResultsToAudience": true,
+          "isLocked": false
+        }
+      ]
+    }
+  },
+  "participants": {
+    "824915": []
+  },
+  "responses": {
+    "824915": [
+      {
+        "id": "sub_port3001",
+        "presentationId": "demo-interactive-session",
+        "questionId": "q1-short-answer",
+        "participantId": "p_test",
+        "participantName": "Port3001 Tester",
+        "participantWhatsapp": "+1234567890",
+        "participantEmail": "tester@test.com",
+        "value": "DualPortMagic",
+        "createdAt": "2026-10-14T05:55:00Z"
+      }
+    ]
+  }
+}

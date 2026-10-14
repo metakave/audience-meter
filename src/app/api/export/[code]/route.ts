@@ -55,13 +55,12 @@ export async function GET(
     }
   }
 
-  // Fallback to in-memory store
+  // Fallback to server store
   if (!presentation) {
-    const globalStore = (global as any).__AUDIENCE_STORE__;
-    if (globalStore) {
-      presentation = globalStore.presentations.get(code) || null;
-      responses = globalStore.responses.get(code) || [];
-    }
+    const { getStoreData } = await import('@/lib/server-store');
+    const store = getStoreData();
+    presentation = store.presentations[code] || null;
+    responses = store.responses[code] || [];
   }
 
   if (!presentation) {
