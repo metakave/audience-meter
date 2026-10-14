@@ -122,7 +122,8 @@ function ParticipantJoinContent({
         .subscribe();
     }
 
-    // Fallback polling for zero-config mode
+    // Adaptive polling (relaxed when WebSocket pushes live slide events)
+    const pollIntervalTime = isSupabaseConfigured ? 6000 : 2200;
     const pollInterval = setInterval(async () => {
       try {
         const pres = await fetchPresentation(code);
@@ -140,10 +141,10 @@ function ParticipantJoinContent({
           });
         }
       } catch {}
-    }, 1800);
+    }, pollIntervalTime);
 
     return () => {
-      if (supabaseChannel) supabase?.removeChannel(supabaseChannel);
+      if (supabaseChannel && supabase) supabase.removeChannel(supabaseChannel);
       clearInterval(pollInterval);
     };
   }, [code, presentation?.id]);
@@ -151,43 +152,41 @@ function ParticipantJoinContent({
   const currentQuestion: Question | undefined =
     presentation?.questions?.[presentation?.currentQuestionIndex ?? 0];
 
-  // 3. Clear or restore answer when question changes
+  // 3. Clear or restore answer when question changes (checking local cache first for instant 0ms restore)
   useEffect(() => {
-    if (!currentQuestion) return;
-    // Check if participant already answered this question in previous submissions
-    if (participant && presentation) {
-      fetchResponses(presentation.id, code).then((resps) => {
-        const existing = resps.find(
-          (r) => r.participantId === participant.id && r.questionId === currentQuestion.id
-        );
-        if (existing) {
-          setSubmittedForQuestionId(currentQuestion.id);
-          setSubmittedValue(existing.value);
-          // Restore selections
-          if (currentQuestion.type === 'mcq' || currentQuestion.type === 'true_false') {
-            setSelectedOption(existing.value);
-          } else if (currentQuestion.type === 'multiple_choice') {
-            try {
-              setSelectedMultiple(JSON.parse(existing.value));
-            } catch {
-              setSelectedMultiple([existing.value]);
-            }
-          } else if (currentQuestion.type === 'rating_scale') {
-            setRatingAnswer(parseInt(existing.value, 10) || 0);
-          } else {
-            setTextAnswer(existing.value);
-          }
-        } else {
-          setSubmittedForQuestionId(null);
-          setSubmittedValue('');
-          setSelectedOption('');
-          setSelectedMultiple([]);
-          setTextAnswer('');
-          setRatingAnswer(0);
+    if (!currentQuestion || !participant) return;
+
+    const cacheKey = `audiencemeter_ans_${code}_${participant.id}_${currentQuestion.id}`;
+    let cachedVal: string | null = null;
+    try {
+      cachedVal = sessionStorage.getItem(cacheKey) || localStorage.getItem(cacheKey);
+    } catch {}
+
+    if (cachedVal) {
+      setSubmittedForQuestionId(currentQuestion.id);
+      setSubmittedValue(cachedVal);
+      if (currentQuestion.type === 'mcq' || currentQuestion.type === 'true_false') {
+        setSelectedOption(cachedVal);
+      } else if (currentQuestion.type === 'multiple_choice') {
+        try {
+          setSelectedMultiple(JSON.parse(cachedVal));
+        } catch {
+          setSelectedMultiple([cachedVal]);
         }
-      });
+      } else if (currentQuestion.type === 'rating_scale') {
+        setRatingAnswer(parseInt(cachedVal, 10) || 0);
+      } else {
+        setTextAnswer(cachedVal);
+      }
+    } else {
+      setSubmittedForQuestionId(null);
+      setSubmittedValue('');
+      setSelectedOption('');
+      setSelectedMultiple([]);
+      setTextAnswer('');
+      setRatingAnswer(0);
     }
-  }, [currentQuestion?.id, participant, presentation?.id, code]);
+  }, [currentQuestion?.id, participant?.id, code]);
 
   // Handle Participant Registration
   const handleRegister = async (e: React.FormEvent) => {
@@ -243,6 +242,17 @@ function ParticipantJoinContent({
     if (!valueToSubmit) return;
 
     setIsSubmitting(true);
+    // Optimistic UI update: Immediate visual confirmation prevents repeat tapping
+    setSubmittedForQuestionId(currentQuestion.id);
+    setSubmittedValue(valueToSubmit);
+
+    // Cache answer locally
+    const cacheKey = `audiencemeter_ans_${code}_${participant.id}_${currentQuestion.id}`;
+    try {
+      sessionStorage.setItem(cacheKey, valueToSubmit);
+      localStorage.setItem(cacheKey, valueToSubmit);
+    } catch {}
+
     const submission: ResponseSubmission = {
       id: `${participant.id}_${currentQuestion.id}`,
       presentationId: presentation.id,
@@ -255,12 +265,13 @@ function ParticipantJoinContent({
       createdAt: new Date().toISOString(),
     };
 
-    const ok = await submitResponse(submission, code);
-    if (ok) {
-      setSubmittedForQuestionId(currentQuestion.id);
-      setSubmittedValue(valueToSubmit);
+    try {
+      await submitResponse(submission, code);
+    } catch (err) {
+      console.warn('Background response submit error:', err);
+    } finally {
+      setIsSubmitting(false);
     }
-    setIsSubmitting(false);
   };
 
   const isExclusiveOption = (text: string) => {

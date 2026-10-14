@@ -80,26 +80,31 @@ function PresenterLiveContent({
         .channel(`present_channel_${code}`)
         .on(
           'postgres_changes',
-          { event: 'INSERT', schema: 'public', table: 'responses', filter: `presentation_id=eq.${presentation.id}` },
+          { event: '*', schema: 'public', table: 'responses', filter: `presentation_id=eq.${presentation.id}` },
           (payload: any) => {
-            if (payload.new) {
+            if (payload.eventType === 'DELETE' && payload.old) {
+              setResponses((prev) => prev.filter((r) => r.id !== payload.old.id));
+            } else if (payload.new) {
+              const incoming: ResponseSubmission = {
+                id: payload.new.id,
+                presentationId: payload.new.presentation_id,
+                questionId: payload.new.question_id,
+                participantId: payload.new.participant_id,
+                participantName: payload.new.participant_name,
+                participantWhatsapp: payload.new.participant_whatsapp,
+                participantEmail: payload.new.participant_email,
+                value: payload.new.value,
+                createdAt: payload.new.created_at,
+              };
+
               setResponses((prev) => {
-                const existingIdx = prev.findIndex((r) => r.id === payload.new.id);
-                if (existingIdx >= 0) return prev;
-                return [
-                  ...prev,
-                  {
-                    id: payload.new.id,
-                    presentationId: payload.new.presentation_id,
-                    questionId: payload.new.question_id,
-                    participantId: payload.new.participant_id,
-                    participantName: payload.new.participant_name,
-                    participantWhatsapp: payload.new.participant_whatsapp,
-                    participantEmail: payload.new.participant_email,
-                    value: payload.new.value,
-                    createdAt: payload.new.created_at,
-                  },
-                ];
+                const existingIdx = prev.findIndex((r) => r.id === incoming.id);
+                if (existingIdx >= 0) {
+                  const updated = [...prev];
+                  updated[existingIdx] = incoming;
+                  return updated;
+                }
+                return [...prev, incoming];
               });
             }
           }
@@ -107,16 +112,30 @@ function PresenterLiveContent({
         .subscribe();
     }
 
-    // High frequency 1.2s poll for smooth real-time response aggregation
+    // Adaptive fallback polling (relaxed if WebSocket is connected, avoiding excessive re-renders)
+    const pollIntervalTime = isSupabaseConfigured ? 3500 : 1500;
     const pollInterval = setInterval(async () => {
       try {
         const resps = await fetchResponses(presentation.id, code);
-        setResponses(resps);
+        setResponses((prev) => {
+          // Avoid triggering re-renders if length and responses haven't changed
+          if (prev.length === resps.length) {
+            let changed = false;
+            for (let i = 0; i < prev.length; i++) {
+              if (prev[i].id !== resps[i].id || prev[i].value !== resps[i].value) {
+                changed = true;
+                break;
+              }
+            }
+            if (!changed) return prev;
+          }
+          return resps;
+        });
       } catch {}
-    }, 1200);
+    }, pollIntervalTime);
 
     return () => {
-      if (supabaseChannel) supabase?.removeChannel(supabaseChannel);
+      if (supabaseChannel && supabase) supabase.removeChannel(supabaseChannel);
       clearInterval(pollInterval);
     };
   }, [code, presentation?.id]);

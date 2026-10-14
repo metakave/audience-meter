@@ -255,17 +255,20 @@ export async function POST(req: NextRequest) {
 
       if (isSupabaseConfigured && supabase) {
         try {
-          await supabase.from('responses').upsert({
-            id: submission.id,
-            presentation_id: submission.presentationId,
-            question_id: submission.questionId,
-            participant_id: submission.participantId,
-            participant_name: submission.participantName,
-            participant_whatsapp: submission.participantWhatsapp,
-            participant_email: submission.participantEmail,
-            value: submission.value,
-            created_at: submission.createdAt,
-          });
+          await supabase.from('responses').upsert(
+            {
+              id: submission.id,
+              presentation_id: submission.presentationId,
+              question_id: submission.questionId,
+              participant_id: submission.participantId,
+              participant_name: submission.participantName,
+              participant_whatsapp: submission.participantWhatsapp,
+              participant_email: submission.participantEmail,
+              value: submission.value,
+              created_at: submission.createdAt,
+            },
+            { onConflict: 'id' }
+          );
         } catch (e) {
           console.warn('Supabase response upsert failed:', e);
         }

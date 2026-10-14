@@ -107,24 +107,38 @@ export async function registerParticipant(participant: Participant): Promise<boo
  */
 export async function submitResponse(submission: ResponseSubmission, roomCode: string): Promise<boolean> {
   const supabase = getSupabase();
+  let supabaseSuccess = false;
+
   if (isSupabaseConfigured && supabase) {
     try {
-      await supabase.from('responses').insert({
-        id: submission.id,
-        presentation_id: submission.presentationId,
-        question_id: submission.questionId,
-        participant_id: submission.participantId,
-        participant_name: submission.participantName,
-        participant_whatsapp: submission.participantWhatsapp,
-        participant_email: submission.participantEmail,
-        value: submission.value,
-        created_at: submission.createdAt,
-      });
+      const { error } = await supabase.from('responses').upsert(
+        {
+          id: submission.id,
+          presentation_id: submission.presentationId,
+          question_id: submission.questionId,
+          participant_id: submission.participantId,
+          participant_name: submission.participantName,
+          participant_whatsapp: submission.participantWhatsapp,
+          participant_email: submission.participantEmail,
+          value: submission.value,
+          created_at: submission.createdAt,
+        },
+        { onConflict: 'id' }
+      );
+      if (!error) {
+        supabaseSuccess = true;
+      }
     } catch (e) {
-      console.warn('Supabase response insert failed:', e);
+      console.warn('Supabase response upsert failed:', e);
     }
   }
 
+  // If Supabase was configured and succeeded, avoid redundant secondary write load
+  if (supabaseSuccess) {
+    return true;
+  }
+
+  // Fallback to sync endpoint
   try {
     const res = await fetch('/api/sync', {
       method: 'POST',
@@ -268,7 +282,14 @@ export function aggregateQuestionResults(
   question: Question,
   allResponses: ResponseSubmission[]
 ): AggregatedResults {
-  const responses = allResponses.filter((r) => r.questionId === question.id);
+  // Ensure strict concurrency safety: de-duplicate responses by participantId, keeping the latest vote
+  const participantMap = new Map<string, ResponseSubmission>();
+  for (const r of allResponses) {
+    if (r.questionId === question.id) {
+      participantMap.set(r.participantId, r);
+    }
+  }
+  const responses = Array.from(participantMap.values());
   const total = responses.length;
 
   if (question.type === 'mcq' || question.type === 'multiple_choice') {
