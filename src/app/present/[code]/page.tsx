@@ -10,6 +10,7 @@ import {
 import { Presentation, ResponseSubmission, AggregatedResults } from '@/types';
 import { getSupabase, isSupabaseConfigured } from '@/lib/supabase';
 import ChartBar from '@/components/ChartBar';
+import InteractiveChart, { ChartOptionItem } from '@/components/InteractiveChart';
 import WordCloud from '@/components/WordCloud';
 import RatingMeter from '@/components/RatingMeter';
 import QRCodeModal from '@/components/QRCodeModal';
@@ -411,29 +412,18 @@ function PresenterLiveContent({
               <div>
                 {/* A. Single Choice & Multiple Choice Poll Bars */}
                 {(currentQuestion.type === 'mcq' || currentQuestion.type === 'multiple_choice') && (
-                  <div
-                    className="glass-panel"
-                    style={{
-                      padding: '36px 32px',
-                      borderRadius: 'var(--radius-lg)',
-                    }}
-                  >
-                    {currentQuestion.options?.map((opt, idx) => {
-                      const count = aggregated?.optionCounts?.[opt.id] ?? 0;
-                      const letter = String.fromCharCode(65 + idx);
-                      return (
-                        <ChartBar
-                          key={opt.id}
-                          label={letter}
-                          optionText={opt.text}
-                          count={count}
-                          totalVotes={aggregated?.totalResponses ?? 0}
-                          index={idx}
-                          isCorrect={opt.isCorrect}
-                        />
-                      );
-                    })}
-                  </div>
+                  <InteractiveChart
+                    options={
+                      currentQuestion.options?.map((opt, idx) => ({
+                        id: opt.id,
+                        label: String.fromCharCode(65 + idx),
+                        text: opt.text,
+                        count: aggregated?.optionCounts?.[opt.id] ?? 0,
+                        isCorrect: opt.isCorrect,
+                      })) ?? []
+                    }
+                    totalVotes={aggregated?.totalResponses ?? 0}
+                  />
                 )}
 
                 {/* B. Short Answer - Dynamic Word Cloud */}

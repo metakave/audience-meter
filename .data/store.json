@@ -1,5 +1,39 @@
 {
   "presentations": {
+    "145577": {
+      "id": "pres_1791958552034",
+      "title": "Test Presentation",
+      "code": "145577",
+      "currentQuestionIndex": 0,
+      "isLive": true,
+      "isLocked": false,
+      "showResults": true,
+      "createdAt": "2026-10-14T06:15:52.034Z",
+      "updatedAt": "2026-10-14T06:15:52.034Z",
+      "questions": [
+        {
+          "id": "q_1791958552034_1",
+          "type": "mcq",
+          "title": "What is your primary goal for today?",
+          "showResultsToAudience": true,
+          "isLocked": false,
+          "options": [
+            {
+              "id": "opt_1",
+              "text": "Learn something new"
+            },
+            {
+              "id": "opt_2",
+              "text": "Network with peers"
+            },
+            {
+              "id": "opt_3",
+              "text": "Explore practical tools"
+            }
+          ]
+        }
+      ]
+    },
     "824915": {
       "id": "demo-interactive-session",
       "title": "Audience Pulse & Interactive Q&A",
@@ -105,6 +139,7 @@
     }
   },
   "participants": {
+    "145577": [],
     "824915": [
       {
         "id": "824915_8801924572887_1791957577648",
@@ -119,6 +154,7 @@
     ]
   },
   "responses": {
+    "145577": [],
     "824915": [
       {
         "id": "sub_port3001",
