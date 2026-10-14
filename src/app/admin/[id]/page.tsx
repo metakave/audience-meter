@@ -17,6 +17,7 @@ import {
   HelpCircle,
   Layers,
   Settings,
+  GripVertical,
 } from 'lucide-react';
 import ThemeToggle from '@/components/ThemeToggle';
 
@@ -38,6 +39,8 @@ function EditorContent({ params }: { params: Promise<{ id: string }> }) {
 
   const [presentation, setPresentation] = useState<Presentation | null>(null);
   const [selectedQuestionIdx, setSelectedQuestionIdx] = useState(0);
+  const [draggedIdx, setDraggedIdx] = useState<number | null>(null);
+  const [dragOverIdx, setDragOverIdx] = useState<number | null>(null);
   const [saving, setSaving] = useState(false);
   const [saveSuccess, setSaveSuccess] = useState(false);
   const [loading, setLoading] = useState(true);
@@ -116,6 +119,47 @@ function EditorContent({ params }: { params: Promise<{ id: string }> }) {
 
     setPresentation({ ...presentation, questions: list });
     setSelectedQuestionIdx(targetIdx);
+  };
+
+  const handleDragStart = (e: React.DragEvent, idx: number) => {
+    setDraggedIdx(idx);
+    e.dataTransfer.effectAllowed = 'move';
+    e.dataTransfer.setData('text/plain', idx.toString());
+  };
+
+  const handleDragOver = (e: React.DragEvent, idx: number) => {
+    e.preventDefault();
+    e.dataTransfer.dropEffect = 'move';
+    if (dragOverIdx !== idx) {
+      setDragOverIdx(idx);
+    }
+  };
+
+  const handleDragLeave = () => {
+    setDragOverIdx(null);
+  };
+
+  const handleDrop = (e: React.DragEvent, targetIdx: number) => {
+    e.preventDefault();
+    if (draggedIdx === null || draggedIdx === targetIdx || !presentation) {
+      setDraggedIdx(null);
+      setDragOverIdx(null);
+      return;
+    }
+
+    const list = [...presentation.questions];
+    const [moved] = list.splice(draggedIdx, 1);
+    list.splice(targetIdx, 0, moved);
+
+    setPresentation({ ...presentation, questions: list });
+    setSelectedQuestionIdx(targetIdx);
+    setDraggedIdx(null);
+    setDragOverIdx(null);
+  };
+
+  const handleDragEnd = () => {
+    setDraggedIdx(null);
+    setDragOverIdx(null);
   };
 
   const handleUpdateActiveQuestion = (field: keyof Question, value: any) => {
@@ -265,30 +309,66 @@ function EditorContent({ params }: { params: Promise<{ id: string }> }) {
         >
           {/* Slides List */}
           <div style={{ overflowY: 'auto', padding: '16px' }}>
-            <div style={{ fontSize: '0.8rem', color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '1px', marginBottom: '12px' }}>
-              Slides ({presentation.questions.length})
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: '12px' }}>
+              <div style={{ fontSize: '0.8rem', color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '1px' }}>
+                Slides ({presentation.questions.length})
+              </div>
+              <div style={{ fontSize: '0.7rem', color: 'var(--text-muted)' }}>
+                Drag to reorder
+              </div>
             </div>
 
             <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
               {presentation.questions.map((q, idx) => {
                 const isSelected = selectedQuestionIdx === idx;
+                const isDragging = draggedIdx === idx;
+                const isDragOver = dragOverIdx === idx;
+
                 return (
                   <div
                     key={q.id}
+                    draggable={true}
+                    onDragStart={(e) => handleDragStart(e, idx)}
+                    onDragOver={(e) => handleDragOver(e, idx)}
+                    onDragLeave={handleDragLeave}
+                    onDrop={(e) => handleDrop(e, idx)}
+                    onDragEnd={handleDragEnd}
                     onClick={() => setSelectedQuestionIdx(idx)}
                     style={{
                       padding: '12px 14px',
                       borderRadius: '10px',
-                      background: isSelected ? 'rgba(99, 102, 241, 0.15)' : 'rgba(255, 255, 255, 0.03)',
-                      border: `1px solid ${isSelected ? 'var(--accent-primary)' : 'var(--border-subtle)'}`,
-                      cursor: 'pointer',
-                      transition: 'all 0.15s ease',
+                      background: isDragOver
+                        ? 'rgba(99, 102, 241, 0.25)'
+                        : isSelected
+                        ? 'rgba(99, 102, 241, 0.15)'
+                        : 'rgba(255, 255, 255, 0.03)',
+                      border: isDragOver
+                        ? '2px dashed var(--accent-primary)'
+                        : `1px solid ${isSelected ? 'var(--accent-primary)' : 'var(--border-subtle)'}`,
+                      cursor: 'grab',
+                      opacity: isDragging ? 0.4 : 1,
+                      transform: isDragOver ? 'scale(1.02)' : 'none',
+                      transition: 'all 0.18s ease',
+                      boxShadow: isDragOver ? '0 4px 16px rgba(99, 102, 241, 0.3)' : 'none',
                     }}
                   >
-                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '4px' }}>
-                      <span style={{ fontSize: '0.75rem', fontWeight: 700, color: isSelected ? '#a5b4fc' : 'var(--text-muted)' }}>
-                        {idx + 1}. {q.type.replace('_', ' ').toUpperCase()}
-                      </span>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '6px' }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                        <span
+                          title="Drag to reorder"
+                          style={{
+                            color: 'var(--text-muted)',
+                            display: 'flex',
+                            alignItems: 'center',
+                            cursor: 'grab',
+                          }}
+                        >
+                          <GripVertical size={15} />
+                        </span>
+                        <span style={{ fontSize: '0.75rem', fontWeight: 700, color: isSelected ? '#a5b4fc' : 'var(--text-muted)' }}>
+                          {idx + 1}. {q.type.replace('_', ' ').toUpperCase()}
+                        </span>
+                      </div>
 
                       <div style={{ display: 'flex', alignItems: 'center', gap: '2px' }}>
                         <button
@@ -297,6 +377,7 @@ function EditorContent({ params }: { params: Promise<{ id: string }> }) {
                             handleMoveQuestion(idx, 'up');
                           }}
                           disabled={idx === 0}
+                          title="Move up"
                           style={{ padding: '2px', color: idx === 0 ? 'rgba(255,255,255,0.1)' : 'var(--text-muted)' }}
                         >
                           <ChevronUp size={14} />
@@ -307,6 +388,7 @@ function EditorContent({ params }: { params: Promise<{ id: string }> }) {
                             handleMoveQuestion(idx, 'down');
                           }}
                           disabled={idx === presentation.questions.length - 1}
+                          title="Move down"
                           style={{ padding: '2px', color: idx === presentation.questions.length - 1 ? 'rgba(255,255,255,0.1)' : 'var(--text-muted)' }}
                         >
                           <ChevronDown size={14} />
@@ -316,6 +398,7 @@ function EditorContent({ params }: { params: Promise<{ id: string }> }) {
                             e.stopPropagation();
                             handleDeleteQuestion(idx);
                           }}
+                          title="Delete slide"
                           style={{ padding: '2px', color: '#f87171', marginLeft: '4px' }}
                         >
                           <Trash2 size={13} />
@@ -323,7 +406,7 @@ function EditorContent({ params }: { params: Promise<{ id: string }> }) {
                       </div>
                     </div>
 
-                    <div style={{ fontSize: '0.9rem', fontWeight: 600, color: '#f8fafc', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                    <div style={{ fontSize: '0.9rem', fontWeight: 600, color: 'var(--text-primary)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', paddingLeft: '21px' }}>
                       {q.title || 'Untitled Question'}
                     </div>
                   </div>

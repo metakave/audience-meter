@@ -177,6 +177,17 @@
         "participantEmail": "hello@sadiqalam.com",
         "value": "Sleepy",
         "createdAt": "2026-10-14T05:59:59.982Z"
+      },
+      {
+        "id": "sub_anim_test",
+        "presentationId": "demo-interactive-session",
+        "questionId": "q2-mcq",
+        "participantId": "p_anim_tester",
+        "participantName": "Animation Tester",
+        "participantWhatsapp": "+1234567",
+        "participantEmail": "anim@test.com",
+        "value": "opt-ai",
+        "createdAt": "2026-10-14T06:19:00Z"
       }
     ]
   }
