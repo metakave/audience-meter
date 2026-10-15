@@ -13,6 +13,7 @@ CREATE TABLE IF NOT EXISTS presentations (
   current_question_index INTEGER DEFAULT 0,
   is_live BOOLEAN DEFAULT true,
   is_locked BOOLEAN DEFAULT false,
+  lock_forward_slides BOOLEAN DEFAULT false,
   show_results BOOLEAN DEFAULT true,
   questions JSONB NOT NULL DEFAULT '[]'::jsonb,
   created_at TIMESTAMPTZ DEFAULT timezone('utc'::text, now()) NOT NULL,

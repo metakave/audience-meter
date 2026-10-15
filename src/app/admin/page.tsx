@@ -3,7 +3,7 @@
 import React, { useEffect, useState } from 'react';
 import { Presentation } from '@/types';
 import { DEFAULT_PRESENTATIONS } from '@/lib/default-data';
-import { savePresentation, deletePresentation } from '@/lib/storage';
+import { savePresentation, deletePresentation, updatePresentationState } from '@/lib/storage';
 import {
   Plus,
   Play,
@@ -13,6 +13,10 @@ import {
   Edit3,
   Layers,
   Radio,
+  RadioOff,
+  Compass,
+  Lock,
+  Unlock,
   ExternalLink,
   Sparkles,
   LogOut,
@@ -171,6 +175,34 @@ export default function AdminDashboardPage() {
     } finally {
       setIsDeleting(false);
     }
+  };
+
+  const handleToggleSession = async (pres: Presentation) => {
+    const nextLive = pres.isLive === false ? true : false;
+    setPresentations((prev) =>
+      prev.map((p) => (p.id === pres.id ? { ...p, isLive: nextLive } : p))
+    );
+    await updatePresentationState(pres.code, { isLive: nextLive });
+    setToastMessage(
+      nextLive
+        ? `Session for "${pres.title}" is now OPEN for responses.`
+        : `Session for "${pres.title}" is now CLOSED.`
+    );
+    setTimeout(() => setToastMessage(null), 3500);
+  };
+
+  const handleToggleForwardLock = async (pres: Presentation) => {
+    const nextLock = !pres.lockForwardSlides;
+    setPresentations((prev) =>
+      prev.map((p) => (p.id === pres.id ? { ...p, lockForwardSlides: nextLock } : p))
+    );
+    await updatePresentationState(pres.code, { lockForwardSlides: nextLock });
+    setToastMessage(
+      nextLock
+        ? `Forward slides locked to host for "${pres.title}".`
+        : `Free participant navigation enabled for "${pres.title}".`
+    );
+    setTimeout(() => setToastMessage(null), 3500);
   };
 
   const hasData = dataCheck.participantCount > 0 || dataCheck.responseCount > 0;
@@ -391,30 +423,69 @@ export default function AdminDashboardPage() {
                     {pres.title}
                   </h2>
 
-                  {/* Existing data status indicator */}
-                  {hasDataBadge && (
-                    <div
+                  {/* Status Badges: Live/Closed, Self-Paced, Response Counts */}
+                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px', marginBottom: '14px', alignItems: 'center' }}>
+                    {/* Live vs Closed Badge */}
+                    <span
                       style={{
                         display: 'inline-flex',
                         alignItems: 'center',
-                        gap: '6px',
-                        fontSize: '0.75rem',
-                        fontWeight: 600,
-                        color: '#10b981',
-                        background: 'rgba(16, 185, 129, 0.1)',
-                        border: '1px solid rgba(16, 185, 129, 0.25)',
+                        gap: '5px',
+                        fontSize: '0.74rem',
+                        fontWeight: 700,
+                        color: pres.isLive !== false ? '#10b981' : '#f87171',
+                        background: pres.isLive !== false ? 'rgba(16, 185, 129, 0.12)' : 'rgba(239, 68, 68, 0.12)',
+                        border: `1px solid ${pres.isLive !== false ? 'rgba(16, 185, 129, 0.25)' : 'rgba(239, 68, 68, 0.25)'}`,
                         padding: '3px 8px',
                         borderRadius: '6px',
-                        marginBottom: '12px',
                       }}
                     >
-                      <Users size={12} />
-                      <span>{pres.participantCount || 0} joined</span>
-                      <span>•</span>
-                      <BarChart2 size={12} />
-                      <span>{pres.responseCount || 0} responses</span>
-                    </div>
-                  )}
+                      {pres.isLive !== false ? <Radio size={12} /> : <RadioOff size={12} />}
+                      <span>{pres.isLive !== false ? 'Session Open' : 'Session Closed'}</span>
+                    </span>
+
+                    {/* Navigation Mode Badge */}
+                    <span
+                      style={{
+                        display: 'inline-flex',
+                        alignItems: 'center',
+                        gap: '5px',
+                        fontSize: '0.74rem',
+                        fontWeight: 600,
+                        color: pres.lockForwardSlides ? '#f59e0b' : '#818cf8',
+                        background: pres.lockForwardSlides ? 'rgba(245, 158, 11, 0.12)' : 'rgba(99, 102, 241, 0.12)',
+                        border: `1px solid ${pres.lockForwardSlides ? 'rgba(245, 158, 11, 0.25)' : 'rgba(99, 102, 241, 0.25)'}`,
+                        padding: '3px 8px',
+                        borderRadius: '6px',
+                      }}
+                    >
+                      {pres.lockForwardSlides ? <Lock size={11} /> : <Compass size={11} />}
+                      <span>{pres.lockForwardSlides ? 'Paced by Host' : 'Self-Paced (Free)'}</span>
+                    </span>
+
+                    {hasDataBadge && (
+                      <span
+                        style={{
+                          display: 'inline-flex',
+                          alignItems: 'center',
+                          gap: '6px',
+                          fontSize: '0.74rem',
+                          fontWeight: 600,
+                          color: 'var(--text-secondary)',
+                          background: 'rgba(255, 255, 255, 0.05)',
+                          border: '1px solid var(--border-subtle)',
+                          padding: '3px 8px',
+                          borderRadius: '6px',
+                        }}
+                      >
+                        <Users size={11} />
+                        <span>{pres.participantCount || 0}</span>
+                        <span>•</span>
+                        <BarChart2 size={11} />
+                        <span>{pres.responseCount || 0} votes</span>
+                      </span>
+                    )}
+                  </div>
 
                   <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px', marginBottom: '20px' }}>
                     {pres.questions.slice(0, 3).map((q) => (
@@ -443,6 +514,59 @@ export default function AdminDashboardPage() {
 
                 {/* Actions */}
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '10px', paddingTop: '16px', borderTop: '1px solid var(--border-subtle)' }}>
+                  {/* Quick Controls: Toggle Live Session / Navigation Mode */}
+                  <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+                    <button
+                      type="button"
+                      onClick={() => handleToggleSession(pres)}
+                      title={pres.isLive !== false ? 'Close this session to prevent further responses' : 'Reopen session to accept responses'}
+                      style={{
+                        flex: 1,
+                        display: 'inline-flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        gap: '5px',
+                        fontSize: '0.78rem',
+                        fontWeight: 600,
+                        padding: '6px 10px',
+                        borderRadius: '6px',
+                        background: pres.isLive !== false ? 'rgba(239, 68, 68, 0.08)' : 'rgba(16, 185, 129, 0.1)',
+                        border: `1px solid ${pres.isLive !== false ? 'rgba(239, 68, 68, 0.25)' : 'rgba(16, 185, 129, 0.3)'}`,
+                        color: pres.isLive !== false ? '#ef4444' : '#10b981',
+                        cursor: 'pointer',
+                        transition: 'all 0.15s ease',
+                      }}
+                    >
+                      {pres.isLive !== false ? <RadioOff size={13} /> : <Radio size={13} />}
+                      <span>{pres.isLive !== false ? 'Close Session' : 'Reopen Session'}</span>
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => handleToggleForwardLock(pres)}
+                      title={pres.lockForwardSlides ? 'Allow participants to navigate to any slide freely' : 'Lock forward slides so participants only see what host is presenting'}
+                      style={{
+                        flex: 1,
+                        display: 'inline-flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        gap: '5px',
+                        fontSize: '0.78rem',
+                        fontWeight: 600,
+                        padding: '6px 10px',
+                        borderRadius: '6px',
+                        background: pres.lockForwardSlides ? 'rgba(99, 102, 241, 0.1)' : 'rgba(245, 158, 11, 0.08)',
+                        border: `1px solid ${pres.lockForwardSlides ? 'rgba(99, 102, 241, 0.25)' : 'rgba(245, 158, 11, 0.25)'}`,
+                        color: pres.lockForwardSlides ? '#818cf8' : '#f59e0b',
+                        cursor: 'pointer',
+                        transition: 'all 0.15s ease',
+                      }}
+                    >
+                      {pres.lockForwardSlides ? <Compass size={13} /> : <Lock size={13} />}
+                      <span>{pres.lockForwardSlides ? 'Allow Free Nav' : 'Lock Forward'}</span>
+                    </button>
+                  </div>
+
                   <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px' }}>
                     <a
                       href={`/present/${pres.code}`}

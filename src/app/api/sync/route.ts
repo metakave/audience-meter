@@ -64,8 +64,9 @@ export async function GET(req: NextRequest) {
             title: p.title,
             code: p.code,
             currentQuestionIndex: p.current_question_index,
-            isLive: p.is_live,
-            isLocked: p.is_locked,
+            isLive: typeof p.is_live === 'boolean' ? p.is_live : true,
+            isLocked: typeof p.is_locked === 'boolean' ? p.is_locked : false,
+            lockForwardSlides: typeof p.lock_forward_slides === 'boolean' ? p.lock_forward_slides : false,
             showResults: p.show_results,
             questions: p.questions,
             createdAt: p.created_at,
@@ -119,8 +120,9 @@ export async function GET(req: NextRequest) {
           title: pData.title,
           code: pData.code,
           currentQuestionIndex: pData.current_question_index,
-          isLive: pData.is_live,
-          isLocked: pData.is_locked,
+          isLive: typeof pData.is_live === 'boolean' ? pData.is_live : true,
+          isLocked: typeof pData.is_locked === 'boolean' ? pData.is_locked : false,
+          lockForwardSlides: typeof pData.lock_forward_slides === 'boolean' ? pData.lock_forward_slides : false,
           showResults: pData.show_results,
           questions: pData.questions,
           createdAt: pData.created_at,
@@ -221,17 +223,23 @@ export async function POST(req: NextRequest) {
 
       if (isSupabaseConfigured && supabase) {
         try {
-          await supabase.from('presentations').upsert({
+          const dbPayload: any = {
             id: presentation.id,
             title: presentation.title,
             code: presentation.code,
             current_question_index: presentation.currentQuestionIndex,
-            is_live: presentation.isLive,
-            is_locked: presentation.isLocked,
+            is_live: typeof presentation.isLive === 'boolean' ? presentation.isLive : true,
+            is_locked: typeof presentation.isLocked === 'boolean' ? presentation.isLocked : false,
+            lock_forward_slides: presentation.lockForwardSlides ?? false,
             show_results: presentation.showResults,
             questions: presentation.questions,
             updated_at: new Date().toISOString(),
-          });
+          };
+          const { error } = await supabase.from('presentations').upsert(dbPayload);
+          if (error && error.message?.includes('lock_forward_slides')) {
+            delete dbPayload.lock_forward_slides;
+            await supabase.from('presentations').upsert(dbPayload);
+          }
         } catch (e) {
           console.warn('Supabase save presentation failed:', e);
         }
@@ -328,10 +336,20 @@ export async function POST(req: NextRequest) {
           if (typeof body.isLocked === 'boolean') {
             dbUpdates.is_locked = body.isLocked;
           }
+          if (typeof body.isLive === 'boolean') {
+            dbUpdates.is_live = body.isLive;
+          }
+          if (typeof body.lockForwardSlides === 'boolean') {
+            dbUpdates.lock_forward_slides = body.lockForwardSlides;
+          }
           if (typeof body.showResults === 'boolean') {
             dbUpdates.show_results = body.showResults;
           }
-          await supabase.from('presentations').update(dbUpdates).eq('code', code);
+          const { error } = await supabase.from('presentations').update(dbUpdates).eq('code', code);
+          if (error && error.message?.includes('lock_forward_slides')) {
+            delete dbUpdates.lock_forward_slides;
+            await supabase.from('presentations').update(dbUpdates).eq('code', code);
+          }
         } catch (e) {
           console.warn('Supabase update slide failed:', e);
         }
@@ -344,6 +362,12 @@ export async function POST(req: NextRequest) {
         }
         if (typeof body.isLocked === 'boolean') {
           presentation.isLocked = body.isLocked;
+        }
+        if (typeof body.isLive === 'boolean') {
+          presentation.isLive = body.isLive;
+        }
+        if (typeof body.lockForwardSlides === 'boolean') {
+          presentation.lockForwardSlides = body.lockForwardSlides;
         }
         if (typeof body.showResults === 'boolean') {
           presentation.showResults = body.showResults;

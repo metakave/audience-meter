@@ -29,6 +29,9 @@ import {
   Minimize2,
   Download,
   Radio,
+  RadioOff,
+  Compass,
+  Power,
   Settings,
   Sparkles,
   MessageSquare,
@@ -169,6 +172,20 @@ function PresenterLiveContent({
     const newLock = !presentation.isLocked;
     setPresentation((prev) => (prev ? { ...prev, isLocked: newLock } : null));
     await updatePresentationState(code, { isLocked: newLock });
+  };
+
+  const handleToggleSessionLive = async () => {
+    if (!presentation) return;
+    const newLive = !presentation.isLive;
+    setPresentation((prev) => (prev ? { ...prev, isLive: newLive } : null));
+    await updatePresentationState(code, { isLive: newLive });
+  };
+
+  const handleToggleForwardLock = async () => {
+    if (!presentation) return;
+    const newLock = !presentation.lockForwardSlides;
+    setPresentation((prev) => (prev ? { ...prev, lockForwardSlides: newLock } : null));
+    await updatePresentationState(code, { lockForwardSlides: newLock });
   };
 
   const handleToggleResults = async () => {
@@ -651,10 +668,46 @@ function PresenterLiveContent({
 
         <div style={{ width: '1px', height: '20px', background: 'var(--border-strong)', margin: '0 4px' }} />
 
+        {/* Live Session Open / Close Toggle */}
+        <button
+          onClick={handleToggleSessionLive}
+          title={
+            presentation.isLive
+              ? 'Session is LIVE (Accepting participant votes). Click to Close Session.'
+              : 'Session is CLOSED (Submissions blocked). Click to Reopen Session.'
+          }
+          style={{
+            padding: '8px',
+            color: presentation.isLive ? '#10b981' : '#f87171',
+            display: 'inline-flex',
+            alignItems: 'center',
+          }}
+        >
+          {presentation.isLive ? <Radio size={18} /> : <RadioOff size={18} />}
+        </button>
+
+        {/* Free Navigation vs Host-Paced Toggle */}
+        <button
+          onClick={handleToggleForwardLock}
+          title={
+            presentation.lockForwardSlides
+              ? 'Forward Navigation LOCKED (Participants cannot advance past presenter). Click to allow free navigation.'
+              : 'Free Navigation ENABLED (Participants can move to any slide independently). Click to lock forward slides.'
+          }
+          style={{
+            padding: '8px',
+            color: presentation.lockForwardSlides ? '#f59e0b' : '#818cf8',
+            display: 'inline-flex',
+            alignItems: 'center',
+          }}
+        >
+          <Compass size={18} />
+        </button>
+
         {/* Lock/Unlock Toggle */}
         <button
           onClick={handleToggleLock}
-          title={presentation.isLocked ? 'Unlock Voting' : 'Lock Voting'}
+          title={presentation.isLocked ? 'Voting Locked (Click to Unlock Voting)' : 'Voting Active (Click to Pause/Lock Voting)'}
           style={{
             padding: '8px',
             color: presentation.isLocked ? '#f87171' : 'var(--text-secondary)',

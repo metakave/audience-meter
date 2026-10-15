@@ -38,8 +38,9 @@ export async function fetchPresentation(code: string): Promise<Presentation | nu
           title: data.title,
           code: data.code,
           currentQuestionIndex: data.current_question_index,
-          isLive: data.is_live,
-          isLocked: data.is_locked,
+          isLive: typeof data.is_live === 'boolean' ? data.is_live : true,
+          isLocked: typeof data.is_locked === 'boolean' ? data.is_locked : false,
+          lockForwardSlides: typeof data.lock_forward_slides === 'boolean' ? data.lock_forward_slides : false,
           showResults: data.show_results,
           questions: data.questions,
           createdAt: data.created_at,
@@ -160,7 +161,13 @@ export async function submitResponse(submission: ResponseSubmission, roomCode: s
  */
 export async function updatePresentationState(
   code: string,
-  updates: { currentQuestionIndex?: number; isLocked?: boolean; showResults?: boolean }
+  updates: {
+    currentQuestionIndex?: number;
+    isLocked?: boolean;
+    showResults?: boolean;
+    isLive?: boolean;
+    lockForwardSlides?: boolean;
+  }
 ): Promise<boolean> {
   const supabase = getSupabase();
   if (isSupabaseConfigured && supabase) {
@@ -172,10 +179,20 @@ export async function updatePresentationState(
       if (typeof updates.isLocked === 'boolean') {
         dbUpdates.is_locked = updates.isLocked;
       }
+      if (typeof updates.isLive === 'boolean') {
+        dbUpdates.is_live = updates.isLive;
+      }
+      if (typeof updates.lockForwardSlides === 'boolean') {
+        dbUpdates.lock_forward_slides = updates.lockForwardSlides;
+      }
       if (typeof updates.showResults === 'boolean') {
         dbUpdates.show_results = updates.showResults;
       }
-      await supabase.from('presentations').update(dbUpdates).eq('code', code);
+      const { error } = await supabase.from('presentations').update(dbUpdates).eq('code', code);
+      if (error && error.message?.includes('lock_forward_slides')) {
+        delete dbUpdates.lock_forward_slides;
+        await supabase.from('presentations').update(dbUpdates).eq('code', code);
+      }
     } catch (e) {
       console.warn('Supabase presentation update failed:', e);
     }
@@ -204,17 +221,23 @@ export async function savePresentation(presentation: Presentation): Promise<bool
   const supabase = getSupabase();
   if (isSupabaseConfigured && supabase) {
     try {
-      await supabase.from('presentations').upsert({
+      const dbPayload: any = {
         id: presentation.id,
         title: presentation.title,
         code: presentation.code,
         current_question_index: presentation.currentQuestionIndex,
         is_live: presentation.isLive,
         is_locked: presentation.isLocked,
+        lock_forward_slides: presentation.lockForwardSlides ?? false,
         show_results: presentation.showResults,
         questions: presentation.questions,
         updated_at: new Date().toISOString(),
-      });
+      };
+      const { error } = await supabase.from('presentations').upsert(dbPayload);
+      if (error && error.message?.includes('lock_forward_slides')) {
+        delete dbPayload.lock_forward_slides;
+        await supabase.from('presentations').upsert(dbPayload);
+      }
     } catch (e) {
       console.warn('Supabase presentation upsert failed:', e);
     }

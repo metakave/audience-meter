@@ -1,20 +1,23 @@
 'use client';
 
-import React, { useEffect, useState, use, Suspense } from 'react';
+import React, { useEffect, useState, use, Suspense, useCallback } from 'react';
 import {
   fetchPresentation,
   getLocalParticipant,
   saveLocalParticipant,
   registerParticipant,
   submitResponse,
-  fetchResponses,
 } from '@/lib/storage';
 import { Presentation, Participant, ResponseSubmission, Question } from '@/types';
 import { getSupabase, isSupabaseConfigured } from '@/lib/supabase';
 import {
   CheckCircle2,
   Lock,
+  Unlock,
   ArrowRight,
+  ArrowLeft,
+  ChevronLeft,
+  ChevronRight,
   User,
   Phone,
   Mail,
@@ -23,6 +26,10 @@ import {
   RefreshCw,
   Edit2,
   Radio,
+  RadioOff,
+  Compass,
+  AlertCircle,
+  RotateCcw,
 } from 'lucide-react';
 import ThemeToggle from '@/components/ThemeToggle';
 
@@ -37,6 +44,11 @@ function ParticipantJoinContent({
   const [presentation, setPresentation] = useState<Presentation | null>(null);
   const [participant, setParticipant] = useState<Participant | null>(null);
 
+  // Self-Paced Navigation state
+  const [activeSlideIndex, setActiveSlideIndex] = useState<number>(0);
+  const [userNavigatedManually, setUserNavigatedManually] = useState<boolean>(false);
+  const [answeredQuestionIds, setAnsweredQuestionIds] = useState<Set<string>>(new Set());
+
   // Registration Form State
   const [firstName, setFirstName] = useState('');
   const [lastName, setLastName] = useState('');
@@ -45,7 +57,7 @@ function ParticipantJoinContent({
   const [registering, setRegistering] = useState(false);
   const [formError, setFormError] = useState('');
 
-  // Active voting state
+  // Active voting state for current question
   const [selectedOption, setSelectedOption] = useState<string>('');
   const [selectedMultiple, setSelectedMultiple] = useState<string[]>([]);
   const [textAnswer, setTextAnswer] = useState<string>('');
@@ -55,7 +67,7 @@ function ParticipantJoinContent({
   const [submittedValue, setSubmittedValue] = useState<string>('');
   const [isEditingProfile, setIsEditingProfile] = useState(false);
 
-  // 1. Initial Load & Restore Participant Profile
+  // 1. Initial Load & Participant Profile Restoration
   useEffect(() => {
     async function loadData() {
       setLoading(true);
@@ -90,40 +102,86 @@ function ParticipantJoinContent({
     loadData();
   }, [code]);
 
-  // 2. Real-time Subscription to Presentation updates & slide changes
+  // Synchronize initial question index if user hasn't manually chosen a question
+  useEffect(() => {
+    if (presentation && !userNavigatedManually) {
+      const idx = typeof presentation.currentQuestionIndex === 'number' ? presentation.currentQuestionIndex : 0;
+      setActiveSlideIndex(idx);
+    }
+  }, [presentation?.currentQuestionIndex, userNavigatedManually]);
+
+  // Scan local cache to discover all previously answered questions
+  const refreshAnsweredCache = useCallback(() => {
+    if (!presentation || !participant) return;
+    const answered = new Set<string>();
+    presentation.questions.forEach((q) => {
+      const cacheKey = `audiencemeter_ans_${code}_${participant.id}_${q.id}`;
+      try {
+        const val = sessionStorage.getItem(cacheKey) || localStorage.getItem(cacheKey);
+        if (val) answered.add(q.id);
+      } catch {}
+    });
+    setAnsweredQuestionIds(answered);
+  }, [presentation, participant, code]);
+
+  useEffect(() => {
+    refreshAnsweredCache();
+  }, [refreshAnsweredCache, activeSlideIndex]);
+
+  // 2. Real-time Subscription & Anti-Timeout Reconnection Engine (>1 Hour Resilience)
   useEffect(() => {
     if (!presentation) return;
 
     const supabase = getSupabase();
     let supabaseChannel: any = null;
 
-    if (isSupabaseConfigured && supabase) {
-      supabaseChannel = supabase
-        .channel(`pres_${code}`)
-        .on(
-          'postgres_changes',
-          { event: 'UPDATE', schema: 'public', table: 'presentations', filter: `code=eq.${code}` },
-          (payload: any) => {
-            if (payload.new) {
-              setPresentation((prev) =>
-                prev
-                  ? {
-                      ...prev,
-                      currentQuestionIndex: payload.new.current_question_index,
-                      isLocked: payload.new.is_locked,
-                      showResults: payload.new.show_results,
-                      isLive: payload.new.is_live,
-                    }
-                  : null
-              );
-            }
+    const initSubscription = () => {
+      if (isSupabaseConfigured && supabase) {
+        try {
+          if (supabaseChannel) {
+            supabase.removeChannel(supabaseChannel);
           }
-        )
-        .subscribe();
-    }
+          supabaseChannel = supabase
+            .channel(`pres_${code}_${Date.now()}`)
+            .on(
+              'postgres_changes',
+              { event: 'UPDATE', schema: 'public', table: 'presentations', filter: `code=eq.${code}` },
+              (payload: any) => {
+                if (payload.new) {
+                  setPresentation((prev) =>
+                    prev
+                      ? {
+                          ...prev,
+                          currentQuestionIndex: payload.new.current_question_index,
+                          isLocked: payload.new.is_locked,
+                          isLive: typeof payload.new.is_live === 'boolean' ? payload.new.is_live : prev.isLive,
+                          lockForwardSlides:
+                            typeof payload.new.lock_forward_slides === 'boolean'
+                              ? payload.new.lock_forward_slides
+                              : prev.lockForwardSlides,
+                          showResults: payload.new.show_results,
+                        }
+                      : null
+                  );
+                }
+              }
+            )
+            .subscribe((status: string) => {
+              // Automatically reconnect on websocket drop, token expiry, or network blip
+              if (status === 'TIMED_OUT' || status === 'CLOSED' || status === 'CHANNEL_ERROR') {
+                setTimeout(initSubscription, 2000);
+              }
+            });
+        } catch (e) {
+          console.warn('Supabase subscribe error:', e);
+        }
+      }
+    };
 
-    // Adaptive polling (relaxed when WebSocket pushes live slide events)
-    const pollIntervalTime = isSupabaseConfigured ? 6000 : 2200;
+    initSubscription();
+
+    // Secondary HTTP Polling Heartbeat (Guarantees infinite connection without timeouts)
+    const pollIntervalTime = 3800;
     const pollInterval = setInterval(async () => {
       try {
         const pres = await fetchPresentation(code);
@@ -133,6 +191,8 @@ function ParticipantJoinContent({
               !prev ||
               prev.currentQuestionIndex !== pres.currentQuestionIndex ||
               prev.isLocked !== pres.isLocked ||
+              prev.isLive !== pres.isLive ||
+              prev.lockForwardSlides !== pres.lockForwardSlides ||
               prev.showResults !== pres.showResults
             ) {
               return pres;
@@ -143,16 +203,43 @@ function ParticipantJoinContent({
       } catch {}
     }, pollIntervalTime);
 
+    // Visibility & Wakeup handler: Restores connection immediately when phone wakes up after hours
+    const handleVisibilityOrWakeup = async () => {
+      if (document.visibilityState === 'visible') {
+        try {
+          initSubscription();
+          const pres = await fetchPresentation(code);
+          if (pres) setPresentation(pres);
+        } catch {}
+      }
+    };
+
+    window.addEventListener('visibilitychange', handleVisibilityOrWakeup);
+    window.addEventListener('focus', handleVisibilityOrWakeup);
+    window.addEventListener('online', handleVisibilityOrWakeup);
+
     return () => {
       if (supabaseChannel && supabase) supabase.removeChannel(supabaseChannel);
       clearInterval(pollInterval);
+      window.removeEventListener('visibilitychange', handleVisibilityOrWakeup);
+      window.removeEventListener('focus', handleVisibilityOrWakeup);
+      window.removeEventListener('online', handleVisibilityOrWakeup);
     };
   }, [code, presentation?.id]);
 
-  const currentQuestion: Question | undefined =
-    presentation?.questions?.[presentation?.currentQuestionIndex ?? 0];
+  // Current Question is determined by the participant's independent slide index
+  const totalQuestions = presentation?.questions?.length || 0;
+  const safeIndex = Math.max(0, Math.min(activeSlideIndex, totalQuestions - 1));
+  const currentQuestion: Question | undefined = presentation?.questions?.[safeIndex];
 
-  // 3. Clear or restore answer when question changes (checking local cache first for instant 0ms restore)
+  // Forward Navigation lock check
+  const isForwardLocked = Boolean(
+    presentation?.lockForwardSlides &&
+      typeof presentation?.currentQuestionIndex === 'number' &&
+      safeIndex >= presentation.currentQuestionIndex
+  );
+
+  // 3. Clear or restore answer when participant moves to a question
   useEffect(() => {
     if (!currentQuestion || !participant) return;
 
@@ -186,7 +273,7 @@ function ParticipantJoinContent({
       setTextAnswer('');
       setRatingAnswer(0);
     }
-  }, [currentQuestion?.id, participant?.id, code]);
+  }, [currentQuestion?.id, participant?.id, code, safeIndex]);
 
   // Handle Participant Registration
   const handleRegister = async (e: React.FormEvent) => {
@@ -224,6 +311,8 @@ function ParticipantJoinContent({
   // Handle Response Submission
   const handleSubmitAnswer = async (customValue?: string) => {
     if (!participant || !presentation || !currentQuestion) return;
+    // Session closure and lock checks
+    if (!presentation.isLive) return;
     if (presentation.isLocked || currentQuestion.isLocked) return;
 
     let valueToSubmit = customValue;
@@ -242,7 +331,7 @@ function ParticipantJoinContent({
     if (!valueToSubmit) return;
 
     setIsSubmitting(true);
-    // Optimistic UI update: Immediate visual confirmation prevents repeat tapping
+    // Optimistic UI update
     setSubmittedForQuestionId(currentQuestion.id);
     setSubmittedValue(valueToSubmit);
 
@@ -252,6 +341,8 @@ function ParticipantJoinContent({
       sessionStorage.setItem(cacheKey, valueToSubmit);
       localStorage.setItem(cacheKey, valueToSubmit);
     } catch {}
+
+    setAnsweredQuestionIds((prev) => new Set(prev).add(currentQuestion.id));
 
     const submission: ResponseSubmission = {
       id: `${participant.id}_${currentQuestion.id}`,
@@ -268,7 +359,7 @@ function ParticipantJoinContent({
     try {
       await submitResponse(submission, code);
     } catch (err) {
-      console.warn('Background response submit error:', err);
+      console.warn('Response submit error:', err);
     } finally {
       setIsSubmitting(false);
     }
@@ -285,7 +376,6 @@ function ParticipantJoinContent({
     );
   };
 
-  // Toggle multiple choice options with exclusive options and limits
   const toggleMultiple = (optId: string) => {
     const clickedOpt = currentQuestion?.options?.find((o) => o.id === optId);
     if (!clickedOpt) return;
@@ -297,28 +387,55 @@ function ParticipantJoinContent({
         return prev.filter((id) => id !== optId);
       }
 
-      // If clicked option is an exclusive option (e.g. None, Still exploring, Haven't used AI), select alone
       if (isClickedExclusive) {
         return [optId];
       }
 
-      // If choosing a standard option, remove any previously selected exclusive options
-      const nonExclusivePrev = prev.filter((id) => {
+      const filtered = prev.filter((id) => {
         const o = currentQuestion?.options?.find((opt) => opt.id === id);
         return o ? !isExclusiveOption(o.text) : true;
       });
 
-      // Check max selections limit
-      const max = currentQuestion?.maxSelections;
-      if (max && nonExclusivePrev.length >= max) {
-        alert(`You can choose up to ${max} options.`);
-        return prev;
+      const maxLimit = currentQuestion?.maxSelections || 3;
+      if (filtered.length >= maxLimit) {
+        return [...filtered.slice(1), optId];
       }
 
-      return [...nonExclusivePrev, optId];
+      return [...filtered, optId];
     });
   };
 
+  // Navigation handlers
+  const handleNextSlide = () => {
+    if (safeIndex < totalQuestions - 1 && !isForwardLocked) {
+      setUserNavigatedManually(true);
+      setActiveSlideIndex(safeIndex + 1);
+    }
+  };
+
+  const handlePrevSlide = () => {
+    if (safeIndex > 0) {
+      setUserNavigatedManually(true);
+      setActiveSlideIndex(safeIndex - 1);
+    }
+  };
+
+  const handleJumpToSlide = (index: number) => {
+    if (presentation?.lockForwardSlides && index > (presentation.currentQuestionIndex || 0)) {
+      return;
+    }
+    setUserNavigatedManually(true);
+    setActiveSlideIndex(index);
+  };
+
+  const handleJumpToHost = () => {
+    if (presentation && typeof presentation.currentQuestionIndex === 'number') {
+      setUserNavigatedManually(false);
+      setActiveSlideIndex(presentation.currentQuestionIndex);
+    }
+  };
+
+  // Loading state
   if (loading) {
     return (
       <div
@@ -331,13 +448,23 @@ function ParticipantJoinContent({
           gap: '16px',
         }}
       >
-        <div style={{ width: '32px', height: '32px', border: '3px solid #6366f1', borderTopColor: 'transparent', borderRadius: '50%', animation: 'spin 0.8s linear infinite' }} />
-        <p style={{ color: 'var(--text-secondary)', fontSize: '0.95rem' }}>Joining session {code}...</p>
+        <div
+          style={{
+            width: '38px',
+            height: '38px',
+            border: '3px solid #6366f1',
+            borderTopColor: 'transparent',
+            borderRadius: '50%',
+            animation: 'spin 0.8s linear infinite',
+          }}
+        />
+        <p style={{ color: 'var(--text-secondary)' }}>Connecting to session {code}...</p>
         <style>{`@keyframes spin { to { transform: rotate(360deg); } }`}</style>
       </div>
     );
   }
 
+  // Presentation not found
   if (!presentation) {
     return (
       <div
@@ -351,20 +478,20 @@ function ParticipantJoinContent({
           textAlign: 'center',
         }}
       >
-        <div className="glass-panel" style={{ maxWidth: '420px', padding: '36px' }}>
-          <h2 style={{ fontSize: '1.4rem', fontWeight: 700, marginBottom: '8px' }}>Presentation Not Found</h2>
-          <p style={{ color: 'var(--text-secondary)', fontSize: '0.9rem', marginBottom: '24px' }}>
-            No active session found with code <strong>{code}</strong>. Please verify the room code and try again.
+        <div className="glass-panel" style={{ padding: '36px 24px', maxWidth: '420px', width: '100%' }}>
+          <h2 style={{ fontSize: '1.4rem', fontWeight: 800, marginBottom: '8px' }}>Presentation Not Found</h2>
+          <p style={{ color: 'var(--text-secondary)', marginBottom: '20px', fontSize: '0.9rem' }}>
+            Room code <strong>{code}</strong> does not exist or may have been deleted.
           </p>
-          <a href="/join" className="btn-primary" style={{ width: '100%' }}>
-            Enter Different Code
+          <a href="/join" className="btn-primary" style={{ display: 'inline-block', width: '100%' }}>
+            Try Another Code
           </a>
         </div>
       </div>
     );
   }
 
-  // 1. Participant Registration Screen
+  // 1. Participant Registration Modal / Screen
   if (!participant || isEditingProfile) {
     return (
       <div
@@ -372,46 +499,46 @@ function ParticipantJoinContent({
           minHeight: '100vh',
           display: 'flex',
           flexDirection: 'column',
-          justifyContent: 'center',
           alignItems: 'center',
-          padding: '20px',
+          justifyContent: 'center',
+          padding: '24px',
+          position: 'relative',
         }}
       >
+        <div style={{ position: 'absolute', top: '20px', right: '20px' }}>
+          <ThemeToggle />
+        </div>
+
         <div
           className="glass-panel"
           style={{
             width: '100%',
             maxWidth: '440px',
-            padding: '32px 28px',
-            boxShadow: '0 12px 40px rgba(0, 0, 0, 0.4)',
+            padding: '36px 28px',
+            borderRadius: 'var(--radius-lg)',
+            boxShadow: 'var(--shadow-lg)',
           }}
         >
-          {/* Header */}
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
-            <div
+          <div style={{ textAlign: 'center', marginBottom: '24px' }}>
+            <span
               style={{
-                display: 'inline-flex',
-                alignItems: 'center',
-                gap: '6px',
-                fontSize: '0.8rem',
-                color: '#818cf8',
-                background: 'rgba(99, 102, 241, 0.1)',
+                fontFamily: 'var(--font-mono)',
+                fontSize: '0.85rem',
+                fontWeight: 700,
+                color: 'var(--accent-primary)',
+                background: 'rgba(99, 102, 241, 0.12)',
                 padding: '4px 12px',
                 borderRadius: '9999px',
-                fontWeight: 600,
+                letterSpacing: '1px',
               }}
             >
-              <Radio size={14} className="pulse-dot" /> Live Session #{code}
-            </div>
-            <ThemeToggle compact={true} />
-          </div>
-
-          <div style={{ textAlign: 'center', marginBottom: '24px' }}>
-            <h1 style={{ fontSize: '1.4rem', fontWeight: 800, color: 'var(--text-primary)', marginBottom: '4px' }}>
-              {presentation.title}
+              PIN: {code}
+            </span>
+            <h1 style={{ fontSize: '1.5rem', fontWeight: 800, marginTop: '12px', marginBottom: '6px' }}>
+              {isEditingProfile ? 'Update Profile' : 'Join Audience'}
             </h1>
-            <p style={{ fontSize: '0.85rem', color: 'var(--text-secondary)' }}>
-              Enter your details once to participate in live polls & Q&A
+            <p style={{ color: 'var(--text-secondary)', fontSize: '0.88rem' }}>
+              {presentation.title}
             </p>
           </div>
 
@@ -419,56 +546,33 @@ function ParticipantJoinContent({
             <div
               style={{
                 background: 'rgba(239, 68, 68, 0.15)',
-                border: '1px solid rgba(239, 68, 68, 0.4)',
-                color: '#fca5a5',
+                border: '1px solid rgba(239, 68, 68, 0.3)',
+                color: '#f87171',
                 padding: '10px 14px',
                 borderRadius: '8px',
                 fontSize: '0.85rem',
-                marginBottom: '16px',
+                marginBottom: '18px',
               }}
             >
               {formError}
             </div>
           )}
 
-          <form onSubmit={handleRegister} style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
-              <div>
-                <label style={{ display: 'block', fontSize: '0.8rem', fontWeight: 600, color: 'var(--text-secondary)', marginBottom: '6px' }}>
-                  First Name *
-                </label>
-                <div style={{ position: 'relative' }}>
-                  <input
-                    type="text"
-                    required
-                    value={firstName}
-                    onChange={(e) => setFirstName(e.target.value)}
-                    placeholder="e.g. Sadiq"
-                    style={{
-                      width: '100%',
-                      padding: '12px 14px',
-                      background: 'var(--bg-tertiary)',
-                      border: '1px solid var(--border-subtle)',
-                      borderRadius: '10px',
-                      color: 'var(--text-primary)',
-                      fontSize: '0.95rem',
-                    }}
-                  />
-                </div>
-              </div>
-
-              <div>
-                <label style={{ display: 'block', fontSize: '0.8rem', fontWeight: 600, color: 'var(--text-secondary)', marginBottom: '6px' }}>
-                  Last Name
-                </label>
+          <form onSubmit={handleRegister} style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+            <div>
+              <label style={{ display: 'block', fontSize: '0.8rem', fontWeight: 600, color: 'var(--text-secondary)', marginBottom: '6px' }}>
+                First Name *
+              </label>
+              <div style={{ position: 'relative' }}>
                 <input
                   type="text"
-                  value={lastName}
-                  onChange={(e) => setLastName(e.target.value)}
-                  placeholder="e.g. Ahmed"
+                  required
+                  value={firstName}
+                  onChange={(e) => setFirstName(e.target.value)}
+                  placeholder="e.g. Alex"
                   style={{
                     width: '100%',
-                    padding: '12px 14px',
+                    padding: '12px 14px 12px 38px',
                     background: 'var(--bg-tertiary)',
                     border: '1px solid var(--border-subtle)',
                     borderRadius: '10px',
@@ -476,6 +580,31 @@ function ParticipantJoinContent({
                     fontSize: '0.95rem',
                   }}
                 />
+                <User size={16} style={{ position: 'absolute', left: '14px', top: '15px', color: 'var(--text-muted)' }} />
+              </div>
+            </div>
+
+            <div>
+              <label style={{ display: 'block', fontSize: '0.8rem', fontWeight: 600, color: 'var(--text-secondary)', marginBottom: '6px' }}>
+                Last Name (Optional)
+              </label>
+              <div style={{ position: 'relative' }}>
+                <input
+                  type="text"
+                  value={lastName}
+                  onChange={(e) => setLastName(e.target.value)}
+                  placeholder="e.g. Taylor"
+                  style={{
+                    width: '100%',
+                    padding: '12px 14px 12px 38px',
+                    background: 'var(--bg-tertiary)',
+                    border: '1px solid var(--border-subtle)',
+                    borderRadius: '10px',
+                    color: 'var(--text-primary)',
+                    fontSize: '0.95rem',
+                  }}
+                />
+                <User size={16} style={{ position: 'absolute', left: '14px', top: '15px', color: 'var(--text-muted)' }} />
               </div>
             </div>
 
@@ -543,9 +672,83 @@ function ParticipantJoinContent({
     );
   }
 
-  // 2. Main Live Participant Voting Interface
-  const isAnswered = submittedForQuestionId === currentQuestion?.id;
-  const isLocked = presentation.isLocked || currentQuestion?.isLocked;
+  // 2. Session Closed Check (Admin explicitly closed session)
+  const isSessionClosed = presentation.isLive === false;
+  if (isSessionClosed) {
+    return (
+      <div
+        style={{
+          minHeight: '100vh',
+          display: 'flex',
+          flexDirection: 'column',
+          alignItems: 'center',
+          justifyContent: 'center',
+          padding: '24px',
+          maxWidth: '520px',
+          margin: '0 auto',
+        }}
+      >
+        <div
+          className="glass-panel"
+          style={{
+            width: '100%',
+            padding: '40px 28px',
+            textAlign: 'center',
+            borderRadius: '18px',
+            boxShadow: '0 20px 40px rgba(0, 0, 0, 0.4)',
+          }}
+        >
+          <div
+            style={{
+              width: '60px',
+              height: '60px',
+              borderRadius: '16px',
+              background: 'rgba(239, 68, 68, 0.15)',
+              color: '#ef4444',
+              display: 'inline-flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              marginBottom: '20px',
+            }}
+          >
+            <RadioOff size={30} />
+          </div>
+
+          <h2 style={{ fontSize: '1.5rem', fontWeight: 800, marginBottom: '8px', color: 'var(--text-primary)' }}>
+            Session Closed by Host
+          </h2>
+          <p style={{ color: 'var(--text-secondary)', fontSize: '0.92rem', lineHeight: 1.5, marginBottom: '24px' }}>
+            This live presentation session is currently closed. Submissions are no longer being accepted.
+          </p>
+
+          <div
+            style={{
+              padding: '14px 18px',
+              borderRadius: '12px',
+              background: 'rgba(255, 255, 255, 0.04)',
+              border: '1px solid var(--border-subtle)',
+              fontSize: '0.88rem',
+              color: 'var(--text-primary)',
+            }}
+          >
+            Thank you for participating, <strong>{participant.firstName}</strong>!
+            {answeredQuestionIds.size > 0 && (
+              <div style={{ marginTop: '6px', fontSize: '0.82rem', color: '#10b981' }}>
+                ✓ You recorded answers for {answeredQuestionIds.size} of {totalQuestions} questions.
+              </div>
+            )}
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  // 3. Main Live Participant Voting Interface
+  const isAnswered = currentQuestion ? answeredQuestionIds.has(currentQuestion.id) : false;
+  const isLocked = Boolean(presentation.isLocked || currentQuestion?.isLocked);
+  const hostIsOnDifferentSlide =
+    typeof presentation.currentQuestionIndex === 'number' &&
+    presentation.currentQuestionIndex !== safeIndex;
 
   return (
     <div
@@ -572,7 +775,7 @@ function ParticipantJoinContent({
           borderRadius: 'var(--radius-md)',
           border: '1px solid var(--border-subtle)',
           boxShadow: 'var(--shadow-subtle)',
-          marginBottom: '20px',
+          marginBottom: '16px',
         }}
       >
         <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
@@ -638,100 +841,314 @@ function ParticipantJoinContent({
         </div>
       </header>
 
-      {/* Main Question Card */}
-      <main style={{ flex: 1, display: 'flex', flexDirection: 'column', justifyContent: 'center', paddingBottom: '30px' }}>
+      {/* Host Position Alert Banner (If Host is presenting a different slide) */}
+      {hostIsOnDifferentSlide && (
+        <div
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+            padding: '10px 14px',
+            borderRadius: '10px',
+            background: 'rgba(99, 102, 241, 0.1)',
+            border: '1px solid rgba(99, 102, 241, 0.25)',
+            marginBottom: '16px',
+            fontSize: '0.82rem',
+            color: 'var(--text-primary)',
+          }}
+        >
+          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+            <span style={{ fontSize: '1rem' }}>📍</span>
+            <span>Host is presenting <strong>Slide {(presentation.currentQuestionIndex || 0) + 1}</strong></span>
+          </div>
+          <button
+            type="button"
+            onClick={handleJumpToHost}
+            style={{
+              background: 'var(--accent-primary)',
+              color: '#ffffff',
+              border: 'none',
+              padding: '4px 10px',
+              borderRadius: '6px',
+              fontWeight: 600,
+              fontSize: '0.78rem',
+              cursor: 'pointer',
+            }}
+          >
+            Jump to Host
+          </button>
+        </div>
+      )}
+
+      {/* Main Question Card with Self-Paced Navigation */}
+      <main style={{ flex: 1, display: 'flex', flexDirection: 'column', justifyContent: 'center', paddingBottom: '20px' }}>
         {currentQuestion ? (
           <div
             className="glass-panel"
             style={{
-              padding: '28px 22px',
+              padding: '24px 20px',
               borderRadius: 'var(--radius-lg)',
               boxShadow: '0 10px 30px rgba(0, 0, 0, 0.3)',
             }}
           >
-            {/* Slide Index Badge */}
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '14px' }}>
-              <span
+            {/* Slide Navigation Header with Arrows & Jump Indicators */}
+            <div
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'space-between',
+                marginBottom: '14px',
+                paddingBottom: '12px',
+                borderBottom: '1px solid var(--border-subtle)',
+              }}
+            >
+              {/* Previous Button */}
+              <button
+                type="button"
+                onClick={handlePrevSlide}
+                disabled={safeIndex === 0}
                 style={{
-                  fontSize: '0.75rem',
-                  textTransform: 'uppercase',
-                  letterSpacing: '1px',
-                  fontWeight: 700,
-                  color: 'var(--accent-primary)',
-                  background: 'rgba(99, 102, 241, 0.1)',
-                  padding: '3px 10px',
-                  borderRadius: '6px',
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  gap: '4px',
+                  background: 'var(--bg-tertiary)',
+                  border: '1px solid var(--border-subtle)',
+                  color: safeIndex === 0 ? 'var(--text-muted)' : 'var(--text-primary)',
+                  padding: '6px 10px',
+                  borderRadius: '8px',
+                  fontSize: '0.78rem',
+                  fontWeight: 600,
+                  cursor: safeIndex === 0 ? 'not-allowed' : 'pointer',
+                  opacity: safeIndex === 0 ? 0.4 : 1,
+                  transition: 'all 0.15s ease',
                 }}
               >
-                Question {presentation.currentQuestionIndex + 1} of {presentation.questions.length}
-              </span>
+                <ChevronLeft size={16} /> Back
+              </button>
 
-              {isLocked && (
+              {/* Current Question Badge */}
+              <div style={{ textAlign: 'center' }}>
                 <span
                   style={{
-                    display: 'inline-flex',
-                    alignItems: 'center',
-                    gap: '4px',
-                    fontSize: '0.75rem',
-                    color: '#f87171',
-                    background: 'rgba(239, 68, 68, 0.15)',
-                    padding: '3px 8px',
-                    borderRadius: '6px',
-                    fontWeight: 600,
+                    fontSize: '0.78rem',
+                    fontWeight: 700,
+                    color: 'var(--accent-primary)',
+                    letterSpacing: '0.5px',
                   }}
                 >
-                  <Lock size={12} /> Voting Locked
+                  Question {safeIndex + 1} of {totalQuestions}
                 </span>
-              )}
+                {isLocked && (
+                  <div
+                    style={{
+                      display: 'inline-flex',
+                      alignItems: 'center',
+                      gap: '4px',
+                      fontSize: '0.7rem',
+                      color: '#f87171',
+                      marginLeft: '6px',
+                      fontWeight: 600,
+                    }}
+                  >
+                    <Lock size={10} /> Locked
+                  </div>
+                )}
+              </div>
+
+              {/* Next Button */}
+              <button
+                type="button"
+                onClick={handleNextSlide}
+                disabled={safeIndex >= totalQuestions - 1 || isForwardLocked}
+                title={isForwardLocked ? 'Host has locked forward slides' : 'Next slide'}
+                style={{
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  gap: '4px',
+                  background: isForwardLocked ? 'rgba(239, 68, 68, 0.1)' : 'var(--bg-tertiary)',
+                  border: `1px solid ${isForwardLocked ? 'rgba(239, 68, 68, 0.3)' : 'var(--border-subtle)'}`,
+                  color:
+                    safeIndex >= totalQuestions - 1 || isForwardLocked
+                      ? 'var(--text-muted)'
+                      : 'var(--text-primary)',
+                  padding: '6px 10px',
+                  borderRadius: '8px',
+                  fontSize: '0.78rem',
+                  fontWeight: 600,
+                  cursor: safeIndex >= totalQuestions - 1 || isForwardLocked ? 'not-allowed' : 'pointer',
+                  opacity: safeIndex >= totalQuestions - 1 ? 0.4 : 1,
+                  transition: 'all 0.15s ease',
+                }}
+              >
+                {isForwardLocked ? (
+                  <>
+                    <Lock size={13} color="#f87171" /> Locked
+                  </>
+                ) : (
+                  <>
+                    Next <ChevronRight size={16} />
+                  </>
+                )}
+              </button>
+            </div>
+
+            {/* Quick Question Jump Strip */}
+            <div
+              style={{
+                display: 'flex',
+                gap: '6px',
+                overflowX: 'auto',
+                paddingBottom: '8px',
+                marginBottom: '16px',
+              }}
+            >
+              {presentation.questions.map((q, idx) => {
+                const isActive = idx === safeIndex;
+                const isQAnswered = answeredQuestionIds.has(q.id);
+                const isQForwardLocked = Boolean(
+                  presentation.lockForwardSlides &&
+                    typeof presentation.currentQuestionIndex === 'number' &&
+                    idx > presentation.currentQuestionIndex
+                );
+
+                return (
+                  <button
+                    key={q.id}
+                    type="button"
+                    disabled={isQForwardLocked}
+                    onClick={() => handleJumpToSlide(idx)}
+                    title={
+                      isQForwardLocked
+                        ? `Slide ${idx + 1} locked by host`
+                        : `Jump to Slide ${idx + 1} ${isQAnswered ? '(Answered)' : ''}`
+                    }
+                    style={{
+                      flexShrink: 0,
+                      width: '32px',
+                      height: '32px',
+                      borderRadius: '8px',
+                      border: isActive
+                        ? '2px solid var(--accent-primary)'
+                        : isQAnswered
+                        ? '1px solid rgba(16, 185, 129, 0.5)'
+                        : '1px solid var(--border-subtle)',
+                      background: isActive
+                        ? 'var(--accent-primary)'
+                        : isQAnswered
+                        ? 'rgba(16, 185, 129, 0.15)'
+                        : 'rgba(255, 255, 255, 0.04)',
+                      color: isActive
+                        ? '#ffffff'
+                        : isQAnswered
+                        ? '#10b981'
+                        : isQForwardLocked
+                        ? 'var(--text-muted)'
+                        : 'var(--text-secondary)',
+                      fontSize: '0.8rem',
+                      fontWeight: 700,
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      cursor: isQForwardLocked ? 'not-allowed' : 'pointer',
+                      opacity: isQForwardLocked ? 0.35 : 1,
+                      transition: 'all 0.15s ease',
+                    }}
+                  >
+                    {isQAnswered && !isActive ? '✓' : idx + 1}
+                  </button>
+                );
+              })}
             </div>
 
             <h2
               style={{
-                fontSize: '1.35rem',
+                fontSize: '1.25rem',
                 fontWeight: 700,
                 color: 'var(--text-primary)',
                 lineHeight: 1.35,
-                marginBottom: currentQuestion.description ? '8px' : '22px',
+                marginBottom: currentQuestion.description ? '8px' : '18px',
               }}
             >
               {currentQuestion.title}
             </h2>
 
             {currentQuestion.description && (
-              <p style={{ fontSize: '0.9rem', color: 'var(--text-secondary)', marginBottom: '22px' }}>
+              <p style={{ fontSize: '0.88rem', color: 'var(--text-secondary)', marginBottom: '18px' }}>
                 {currentQuestion.description}
               </p>
             )}
 
-            {/* Answered Banner */}
+            {/* Answered Banner with Next Slide Button */}
             {isAnswered && (
               <div
                 style={{
                   display: 'flex',
                   alignItems: 'center',
-                  gap: '10px',
+                  justifyContent: 'space-between',
                   padding: '12px 16px',
                   background: 'rgba(16, 185, 129, 0.12)',
                   border: '1px solid rgba(16, 185, 129, 0.3)',
                   borderRadius: '12px',
                   color: '#34d399',
-                  marginBottom: '20px',
-                  fontSize: '0.9rem',
+                  marginBottom: '18px',
+                  fontSize: '0.88rem',
+                  flexWrap: 'wrap',
+                  gap: '8px',
                 }}
               >
-                <CheckCircle2 size={20} style={{ flexShrink: 0 }} />
-                <div style={{ flex: 1 }}>
-                  <strong>Response recorded!</strong>
-                  <div style={{ fontSize: '0.8rem', color: 'rgba(255, 255, 255, 0.7)' }}>
-                    Waiting for presenter to advance to next question...
+                <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                  <CheckCircle2 size={18} style={{ flexShrink: 0 }} />
+                  <div>
+                    <strong>Response recorded!</strong>
+                    <div style={{ fontSize: '0.78rem', color: 'rgba(255, 255, 255, 0.7)' }}>
+                      You can change your response below or move to the next slide.
+                    </div>
                   </div>
                 </div>
+
+                {safeIndex < totalQuestions - 1 && !isForwardLocked && (
+                  <button
+                    type="button"
+                    onClick={handleNextSlide}
+                    className="btn-primary"
+                    style={{
+                      padding: '6px 12px',
+                      fontSize: '0.82rem',
+                      display: 'inline-flex',
+                      alignItems: 'center',
+                      gap: '4px',
+                    }}
+                  >
+                    Next Slide <ChevronRight size={14} />
+                  </button>
+                )}
+              </div>
+            )}
+
+            {/* Voting Paused / Locked Banner */}
+            {isLocked && (
+              <div
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '10px',
+                  padding: '12px 14px',
+                  background: 'rgba(239, 68, 68, 0.1)',
+                  border: '1px solid rgba(239, 68, 68, 0.25)',
+                  borderRadius: '10px',
+                  color: '#f87171',
+                  marginBottom: '16px',
+                  fontSize: '0.85rem',
+                }}
+              >
+                <Lock size={16} />
+                <span>Voting is currently paused by the host. You can still navigate and read slides.</span>
               </div>
             )}
 
             {/* A. Single Choice MCQ */}
             {currentQuestion.type === 'mcq' && (
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
                 {currentQuestion.options?.map((opt, idx) => {
                   const isSelected = selectedOption === opt.id;
                   const letter = String.fromCharCode(65 + idx);
@@ -766,7 +1183,7 @@ function ParticipantJoinContent({
                         </span>
                         <span>{opt.text}</span>
                       </div>
-                      {isSelected && <CheckCircle2 size={20} color="#818cf8" />}
+                      {isSelected && <CheckCircle2 size={18} color="#818cf8" />}
                     </button>
                   );
                 })}
@@ -775,7 +1192,7 @@ function ParticipantJoinContent({
 
             {/* B. Multiple Choice */}
             {currentQuestion.type === 'multiple_choice' && (
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
                 {currentQuestion.options?.map((opt) => {
                   const isSelected = selectedMultiple.includes(opt.id);
 
@@ -811,7 +1228,7 @@ function ParticipantJoinContent({
                   disabled={isLocked || isSubmitting || selectedMultiple.length === 0}
                   onClick={() => handleSubmitAnswer()}
                   className="btn-primary"
-                  style={{ marginTop: '12px', padding: '14px', fontSize: '1rem' }}
+                  style={{ marginTop: '10px', padding: '12px', fontSize: '0.95rem' }}
                 >
                   {isSubmitting ? 'Submitting...' : `Submit ${selectedMultiple.length} Selected`}
                 </button>
@@ -820,7 +1237,7 @@ function ParticipantJoinContent({
 
             {/* C. True / False */}
             {currentQuestion.type === 'true_false' && (
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '14px' }}>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
                 <button
                   type="button"
                   disabled={isLocked || isSubmitting}
@@ -831,14 +1248,14 @@ function ParticipantJoinContent({
                   className={`option-select-btn ${selectedOption === 'true' ? 'selected' : ''}`}
                   style={{
                     flexDirection: 'column',
-                    padding: '24px 16px',
+                    padding: '20px 14px',
                     textAlign: 'center',
                     justifyContent: 'center',
                     borderColor: selectedOption === 'true' ? '#10b981' : undefined,
                     background: selectedOption === 'true' ? 'rgba(16, 185, 129, 0.15)' : undefined,
                   }}
                 >
-                  <span style={{ fontSize: '1.4rem', fontWeight: 800, color: '#34d399' }}>TRUE</span>
+                  <span style={{ fontSize: '1.3rem', fontWeight: 800, color: '#34d399' }}>TRUE</span>
                 </button>
 
                 <button
@@ -851,14 +1268,14 @@ function ParticipantJoinContent({
                   className={`option-select-btn ${selectedOption === 'false' ? 'selected' : ''}`}
                   style={{
                     flexDirection: 'column',
-                    padding: '24px 16px',
+                    padding: '20px 14px',
                     textAlign: 'center',
                     justifyContent: 'center',
                     borderColor: selectedOption === 'false' ? '#ef4444' : undefined,
                     background: selectedOption === 'false' ? 'rgba(239, 68, 68, 0.15)' : undefined,
                   }}
                 >
-                  <span style={{ fontSize: '1.4rem', fontWeight: 800, color: '#f87171' }}>FALSE</span>
+                  <span style={{ fontSize: '1.3rem', fontWeight: 800, color: '#f87171' }}>FALSE</span>
                 </button>
               </div>
             )}
@@ -870,7 +1287,7 @@ function ParticipantJoinContent({
                   e.preventDefault();
                   handleSubmitAnswer();
                 }}
-                style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}
+                style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}
               >
                 <input
                   type="text"
@@ -881,21 +1298,21 @@ function ParticipantJoinContent({
                   placeholder="Enter word or short phrase..."
                   style={{
                     width: '100%',
-                    padding: '16px 18px',
+                    padding: '14px 16px',
                     background: 'var(--bg-tertiary)',
                     border: '2px solid var(--border-subtle)',
                     borderRadius: '12px',
                     color: 'var(--text-primary)',
-                    fontSize: '1.1rem',
+                    fontSize: '1rem',
                   }}
                 />
                 <button
                   type="submit"
                   disabled={isLocked || isSubmitting || !textAnswer.trim()}
                   className="btn-primary"
-                  style={{ padding: '14px', fontSize: '1rem' }}
+                  style={{ padding: '12px', fontSize: '0.95rem' }}
                 >
-                  <Send size={16} /> {isSubmitting ? 'Sending...' : 'Send Word'}
+                  <Send size={15} /> {isSubmitting ? 'Sending...' : 'Send Word'}
                 </button>
               </form>
             )}
@@ -907,7 +1324,7 @@ function ParticipantJoinContent({
                   e.preventDefault();
                   handleSubmitAnswer();
                 }}
-                style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}
+                style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}
               >
                 <textarea
                   rows={4}
@@ -918,27 +1335,27 @@ function ParticipantJoinContent({
                   placeholder="Type your response or question here..."
                   style={{
                     width: '100%',
-                    padding: '16px 18px',
+                    padding: '14px 16px',
                     background: 'var(--bg-tertiary)',
                     border: '2px solid var(--border-subtle)',
                     borderRadius: '12px',
                     color: 'var(--text-primary)',
-                    fontSize: '1rem',
+                    fontSize: '0.95rem',
                     lineHeight: 1.5,
                     resize: 'none',
                   }}
                 />
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                  <span style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>
+                  <span style={{ fontSize: '0.78rem', color: 'var(--text-muted)' }}>
                     {textAnswer.length}/500 chars
                   </span>
                   <button
                     type="submit"
                     disabled={isLocked || isSubmitting || !textAnswer.trim()}
                     className="btn-primary"
-                    style={{ padding: '12px 24px', fontSize: '0.95rem' }}
+                    style={{ padding: '10px 20px', fontSize: '0.9rem' }}
                   >
-                    <Send size={16} /> {isSubmitting ? 'Submitting...' : 'Submit Response'}
+                    <Send size={15} /> {isSubmitting ? 'Submitting...' : 'Submit Response'}
                   </button>
                 </div>
               </form>
@@ -952,7 +1369,7 @@ function ParticipantJoinContent({
                     display: 'flex',
                     justifyContent: 'space-between',
                     gap: '8px',
-                    marginBottom: '16px',
+                    marginBottom: '14px',
                   }}
                 >
                   {[1, 2, 3, 4, 5].map((num) => {
@@ -972,11 +1389,11 @@ function ParticipantJoinContent({
                           borderRadius: '12px',
                           border: `2px solid ${isSelected ? '#6366f1' : 'var(--border-subtle)'}`,
                           background: isSelected ? 'rgba(99, 102, 241, 0.2)' : 'rgba(255, 255, 255, 0.04)',
-                          color: isSelected ? '#a5b4fc' : '#ffffff',
-                          fontSize: '1.3rem',
+                          color: isSelected ? '#a5b4fc' : 'inherit',
+                          fontSize: '1.2rem',
                           fontWeight: 700,
                           cursor: 'pointer',
-                          transition: 'all 0.2s ease',
+                          transition: 'all 0.15s ease',
                           boxShadow: isSelected ? '0 0 16px rgba(99, 102, 241, 0.4)' : 'none',
                         }}
                       >
@@ -985,7 +1402,7 @@ function ParticipantJoinContent({
                     );
                   })}
                 </div>
-                <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.8rem', color: 'var(--text-muted)' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.78rem', color: 'var(--text-muted)' }}>
                   <span>1 = Lowest</span>
                   <span>5 = Outstanding</span>
                 </div>
@@ -1002,18 +1419,18 @@ function ParticipantJoinContent({
           >
             <Sparkles size={40} color="#818cf8" style={{ marginBottom: '16px' }} />
             <h3 style={{ fontSize: '1.3rem', fontWeight: 700, marginBottom: '8px' }}>
-              Waiting for Presenter
+              No Questions Available
             </h3>
             <p style={{ color: 'var(--text-secondary)', fontSize: '0.9rem' }}>
-              The presentation has not started or the host is preparing the next question.
+              This presentation does not have any slides configured yet.
             </p>
           </div>
         )}
       </main>
 
       {/* Footer Info */}
-      <footer style={{ textAlign: 'center', padding: '12px 0', fontSize: '0.75rem', color: 'var(--text-muted)' }}>
-        AudienceMeter • Live Real-Time Polling
+      <footer style={{ textAlign: 'center', padding: '10px 0', fontSize: '0.75rem', color: 'var(--text-muted)' }}>
+        AudienceMeter • Live Real-Time Polling • Independent Navigation Active
       </footer>
     </div>
   );

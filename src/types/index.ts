@@ -35,6 +35,7 @@ export interface Presentation {
   currentQuestionIndex: number;
   isLive: boolean;
   isLocked: boolean;
+  lockForwardSlides?: boolean;      // If true, participants cannot navigate beyond presenter's current slide (default: false)
   showResults: boolean;
   questions: Question[];
   createdAt: string;
