@@ -37,6 +37,9 @@ export async function fetchPresentation(code: string): Promise<Presentation | nu
           id: data.id,
           title: data.title,
           code: data.code,
+          type: data.type || (data.id?.startsWith('survey_') ? 'survey' : 'presentation'),
+          description: data.description || '',
+          surveySettings: data.survey_settings || data.surveySettings || undefined,
           currentQuestionIndex: data.current_question_index,
           isLive: typeof data.is_live === 'boolean' ? data.is_live : true,
           isLocked: typeof data.is_locked === 'boolean' ? data.is_locked : false,
@@ -157,6 +160,69 @@ export async function submitResponse(submission: ResponseSubmission, roomCode: s
 }
 
 /**
+ * Submit complete survey form (batch participant + all question responses in one go)
+ */
+export async function submitSurvey(
+  participant: Participant,
+  submissions: ResponseSubmission[],
+  roomCode: string
+): Promise<boolean> {
+  const supabase = getSupabase();
+  let supabaseSuccess = false;
+
+  if (isSupabaseConfigured && supabase) {
+    try {
+      await supabase.from('participants').upsert({
+        id: participant.id,
+        presentation_id: participant.presentationId,
+        room_code: participant.roomCode,
+        first_name: participant.firstName,
+        last_name: participant.lastName,
+        whatsapp: participant.whatsapp,
+        email: participant.email,
+        joined_at: participant.joinedAt,
+      });
+
+      if (submissions.length > 0) {
+        const rows = submissions.map((s) => ({
+          id: s.id,
+          presentation_id: s.presentationId,
+          question_id: s.questionId,
+          participant_id: s.participantId,
+          participant_name: s.participantName,
+          participant_whatsapp: s.participantWhatsapp,
+          participant_email: s.participantEmail,
+          value: s.value,
+          created_at: s.createdAt,
+        }));
+        const { error } = await supabase.from('responses').upsert(rows, { onConflict: 'id' });
+        if (!error) supabaseSuccess = true;
+      } else {
+        supabaseSuccess = true;
+      }
+    } catch (e) {
+      console.warn('Supabase survey batch submit failed:', e);
+    }
+  }
+
+  try {
+    const res = await fetch('/api/sync', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        action: 'submit_survey',
+        code: roomCode,
+        participant,
+        submissions,
+      }),
+    });
+    return res.ok || supabaseSuccess;
+  } catch {
+    return supabaseSuccess;
+  }
+}
+
+/**
  * Update presenter slide state (next, prev, lock, showResults)
  */
 export async function updatePresentationState(
@@ -225,6 +291,9 @@ export async function savePresentation(presentation: Presentation): Promise<bool
         id: presentation.id,
         title: presentation.title,
         code: presentation.code,
+        type: presentation.type || (presentation.id?.startsWith('survey_') ? 'survey' : 'presentation'),
+        description: presentation.description || '',
+        survey_settings: presentation.surveySettings || {},
         current_question_index: presentation.currentQuestionIndex,
         is_live: presentation.isLive,
         is_locked: presentation.isLocked,
@@ -234,9 +303,19 @@ export async function savePresentation(presentation: Presentation): Promise<bool
         updated_at: new Date().toISOString(),
       };
       const { error } = await supabase.from('presentations').upsert(dbPayload);
-      if (error && error.message?.includes('lock_forward_slides')) {
-        delete dbPayload.lock_forward_slides;
-        await supabase.from('presentations').upsert(dbPayload);
+      if (error) {
+        if (
+          error.message?.includes('type') ||
+          error.message?.includes('description') ||
+          error.message?.includes('survey_settings') ||
+          error.message?.includes('lock_forward_slides')
+        ) {
+          delete dbPayload.type;
+          delete dbPayload.description;
+          delete dbPayload.survey_settings;
+          delete dbPayload.lock_forward_slides;
+          await supabase.from('presentations').upsert(dbPayload);
+        }
       }
     } catch (e) {
       console.warn('Supabase presentation upsert failed:', e);

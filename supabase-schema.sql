@@ -5,11 +5,14 @@
 -- 1. Enable UUID Extension
 CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
 
--- 2. Presentations Table
+-- 2. Presentations & Surveys Table
 CREATE TABLE IF NOT EXISTS presentations (
   id TEXT PRIMARY KEY,
   title TEXT NOT NULL,
   code TEXT UNIQUE NOT NULL,
+  type TEXT DEFAULT 'presentation', -- 'presentation' or 'survey'
+  description TEXT,
+  survey_settings JSONB DEFAULT '{}'::jsonb,
   current_question_index INTEGER DEFAULT 0,
   is_live BOOLEAN DEFAULT true,
   is_locked BOOLEAN DEFAULT false,
@@ -19,6 +22,12 @@ CREATE TABLE IF NOT EXISTS presentations (
   created_at TIMESTAMPTZ DEFAULT timezone('utc'::text, now()) NOT NULL,
   updated_at TIMESTAMPTZ DEFAULT timezone('utc'::text, now()) NOT NULL
 );
+
+-- For existing databases, run these optional migration columns:
+ALTER TABLE presentations ADD COLUMN IF NOT EXISTS type TEXT DEFAULT 'presentation';
+ALTER TABLE presentations ADD COLUMN IF NOT EXISTS description TEXT;
+ALTER TABLE presentations ADD COLUMN IF NOT EXISTS survey_settings JSONB DEFAULT '{}'::jsonb;
+ALTER TABLE presentations ADD COLUMN IF NOT EXISTS lock_forward_slides BOOLEAN DEFAULT false;
 
 -- Index for instant lookup by room code (participant join speed)
 CREATE INDEX IF NOT EXISTS idx_presentations_code ON presentations(code);

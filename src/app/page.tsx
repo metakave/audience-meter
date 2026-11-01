@@ -21,14 +21,29 @@ export default function HomePage() {
   const router = useRouter();
   const [roomCode, setRoomCode] = useState('');
   const [error, setError] = useState('');
+  const [isChecking, setIsChecking] = useState(false);
 
-  const handleJoin = (e: React.FormEvent) => {
+  const handleJoin = async (e: React.FormEvent) => {
     e.preventDefault();
     const clean = roomCode.trim().replace(/\s/g, '');
     if (!clean) {
-      setError('Please enter a 6-digit presentation code.');
+      setError('Please enter a 6-digit room or survey code.');
       return;
     }
+    setError('');
+    setIsChecking(true);
+
+    try {
+      const res = await fetch(`/api/sync?code=${encodeURIComponent(clean)}`);
+      if (res.ok) {
+        const data = await res.json();
+        if (data.presentation?.type === 'survey') {
+          router.push(`/survey/${clean}`);
+          return;
+        }
+      }
+    } catch {}
+
     router.push(`/join/${clean}`);
   };
 
@@ -110,7 +125,7 @@ export default function HomePage() {
             marginBottom: '24px',
           }}
         >
-          <Sparkles size={14} /> Real-Time Live Polling & Word Clouds
+          <Sparkles size={14} /> Live Audience Polling & Shareable Survey Forms
         </div>
 
         <h1
@@ -122,7 +137,7 @@ export default function HomePage() {
             marginBottom: '16px',
           }}
         >
-          Turn Any Presentation into an{' '}
+          Interactive Polling &{' '}
           <span
             style={{
               background: 'linear-gradient(135deg, #818cf8 0%, #c084fc 100%)',
@@ -130,7 +145,7 @@ export default function HomePage() {
               WebkitTextFillColor: 'transparent',
             }}
           >
-            Interactive Experience
+            Google Form-Style Surveys
           </span>
         </h1>
 
@@ -143,7 +158,7 @@ export default function HomePage() {
             lineHeight: 1.5,
           }}
         >
-          Ultra-lightweight audience response system. Single & multiple choice polls, live dynamic word clouds, open Q&amp;A, and rating meters for 100-200+ participants.
+          Collect live audience feedback during presentations, or share survey form links with anyone. Responses saved securely in database with one-click Excel (.xlsx) export.
         </p>
 
         {/* Join Card */}
@@ -158,10 +173,10 @@ export default function HomePage() {
           }}
         >
           <h2 style={{ fontSize: '1.1rem', fontWeight: 700, marginBottom: '6px' }}>
-            Joining as an Attendee?
+            Enter Room or Survey Code
           </h2>
           <p style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', marginBottom: '18px' }}>
-            Enter the 6-digit room PIN from the presenter&apos;s screen:
+            Enter the 6-digit room PIN or survey code to participate:
           </p>
 
           {error && (
@@ -200,63 +215,122 @@ export default function HomePage() {
                 color: '#ffffff',
               }}
             />
-            <button type="submit" className="btn-primary" style={{ padding: '14px 20px' }}>
-              Join <ArrowRight size={18} />
+            <button type="submit" disabled={isChecking} className="btn-primary" style={{ padding: '14px 20px' }}>
+              {isChecking ? 'Checking...' : 'Continue'} <ArrowRight size={18} />
             </button>
           </form>
         </div>
 
-        {/* Ready-to-Test Demo Session Banner */}
-        <div
-          className="glass-panel"
-          style={{
-            width: '100%',
-            maxWidth: '780px',
-            padding: '24px 28px',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'space-between',
-            flexWrap: 'wrap',
-            gap: '16px',
-            textAlign: 'left',
-            background: 'rgba(99, 102, 241, 0.08)',
-            border: '1px solid rgba(99, 102, 241, 0.25)',
-          }}
-        >
-          <div>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '4px' }}>
-              <span className="code-pill">PIN: 824915</span>
-              <span style={{ fontSize: '0.8rem', color: '#a5b4fc', fontWeight: 600 }}>
-                Pre-configured Interactive Demo
-              </span>
+        {/* Demo Cards Section */}
+        <div style={{ width: '100%', maxWidth: '780px', display: 'flex', flexDirection: 'column', gap: '16px' }}>
+          {/* Live Polling Demo */}
+          <div
+            className="glass-panel"
+            style={{
+              padding: '22px 28px',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'space-between',
+              flexWrap: 'wrap',
+              gap: '16px',
+              textAlign: 'left',
+              background: 'rgba(99, 102, 241, 0.08)',
+              border: '1px solid rgba(99, 102, 241, 0.25)',
+              borderRadius: '16px',
+            }}
+          >
+            <div>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '4px' }}>
+                <span className="code-pill">PIN: 824915</span>
+                <span style={{ fontSize: '0.8rem', color: '#a5b4fc', fontWeight: 600 }}>
+                  ⚡ Live Interactive Presentation Demo
+                </span>
+              </div>
+              <div style={{ fontSize: '1.05rem', fontWeight: 700, color: '#f8fafc' }}>
+                Audience Pulse & Interactive Q&amp;A
+              </div>
+              <div style={{ fontSize: '0.84rem', color: 'var(--text-secondary)' }}>
+                Live slide-by-slide voting, animated word clouds, and real-time presenter view.
+              </div>
             </div>
-            <div style={{ fontSize: '1.05rem', fontWeight: 700, color: '#f8fafc' }}>
-              Audience Pulse & Interactive Q&amp;A
-            </div>
-            <div style={{ fontSize: '0.85rem', color: 'var(--text-secondary)' }}>
-              Includes MCQ, Word Cloud, True/False, Multiple Choice, and Rating Scale slides.
+
+            <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap' }}>
+              <a
+                href="/present/824915"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="btn-primary"
+                style={{ fontSize: '0.85rem', padding: '10px 16px' }}
+              >
+                <Play size={14} fill="#ffffff" /> Presenter Screen
+              </a>
+              <a
+                href="/join/824915"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="btn-secondary"
+                style={{ fontSize: '0.85rem', padding: '10px 16px' }}
+              >
+                Join Live
+              </a>
             </div>
           </div>
 
-          <div style={{ display: 'flex', gap: '10px' }}>
-            <a
-              href="/present/824915"
-              target="_blank"
-              rel="noopener noreferrer"
-              className="btn-primary"
-              style={{ fontSize: '0.85rem', padding: '10px 16px' }}
-            >
-              <Play size={14} fill="#ffffff" /> Open Presentation Screen
-            </a>
-            <a
-              href="/join/824915"
-              target="_blank"
-              rel="noopener noreferrer"
-              className="btn-secondary"
-              style={{ fontSize: '0.85rem', padding: '10px 16px' }}
-            >
-              Join as Participant
-            </a>
+          {/* Survey Form Demo */}
+          <div
+            className="glass-panel"
+            style={{
+              padding: '22px 28px',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'space-between',
+              flexWrap: 'wrap',
+              gap: '16px',
+              textAlign: 'left',
+              background: 'rgba(168, 85, 247, 0.08)',
+              border: '1px solid rgba(168, 85, 247, 0.25)',
+              borderRadius: '16px',
+            }}
+          >
+            <div>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '4px' }}>
+                <span className="code-pill">Code: 512340</span>
+                <span style={{ fontSize: '0.8rem', color: '#c084fc', fontWeight: 600 }}>
+                  📋 Shareable Survey Form Demo (Google Forms Style)
+                </span>
+              </div>
+              <div style={{ fontSize: '1.05rem', fontWeight: 700, color: '#f8fafc' }}>
+                Event &amp; Workshop Experience Feedback Form
+              </div>
+              <div style={{ fontSize: '0.84rem', color: 'var(--text-secondary)' }}>
+                Standalone share link. Anyone can submit feedback, saved to database and exported to Excel.
+              </div>
+            </div>
+
+            <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap' }}>
+              <a
+                href="/survey/512340"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="btn-primary"
+                style={{
+                  fontSize: '0.85rem',
+                  padding: '10px 16px',
+                  background: 'linear-gradient(135deg, #8b5cf6, #6366f1)',
+                  borderColor: 'transparent',
+                }}
+              >
+                Try Survey Form
+              </a>
+              <a
+                href="/api/export-xlsx/512340"
+                download
+                className="btn-secondary"
+                style={{ fontSize: '0.85rem', padding: '10px 16px', color: '#10b981' }}
+              >
+                Download Excel (.xlsx)
+              </a>
+            </div>
           </div>
         </div>
 
@@ -264,7 +338,7 @@ export default function HomePage() {
         <div
           style={{
             display: 'grid',
-            gridTemplateColumns: 'repeat(auto-fit, minmax(260px, 1fr))',
+            gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))',
             gap: '20px',
             width: '100%',
             marginTop: '60px',
@@ -284,14 +358,26 @@ export default function HomePage() {
           </div>
 
           <div className="glass-panel" style={{ padding: '24px' }}>
+            <div style={{ color: '#c084fc', marginBottom: '12px' }}>
+              <BarChart3 size={24} />
+            </div>
+            <h3 style={{ fontSize: '1.1rem', fontWeight: 700, marginBottom: '6px' }}>
+              Google Forms Style Surveys
+            </h3>
+            <p style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', lineHeight: 1.5 }}>
+              Share direct links for post-event surveys or asynchronous feedback. No live presentation required.
+            </p>
+          </div>
+
+          <div className="glass-panel" style={{ padding: '24px' }}>
             <div style={{ color: '#34d399', marginBottom: '12px' }}>
               <Users size={24} />
             </div>
             <h3 style={{ fontSize: '1.1rem', fontWeight: 700, marginBottom: '6px' }}>
-              Lead Collection Built-in
+              Full Excel (.xlsx) Export
             </h3>
             <p style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', lineHeight: 1.5 }}>
-              Collect First Name, Last Name, WhatsApp number, and Email seamlessly with one-click CSV export.
+              Instant spreadsheet export formatted like Google Sheets with respondent matrix, questions, and contact info.
             </p>
           </div>
 

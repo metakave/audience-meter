@@ -26,12 +26,30 @@ export interface Question {
   timerSeconds?: number;            // Optional countdown timer
   maxSelections?: number;           // For multi-select limits (e.g. choose up to 3)
   guidance?: string;                // Host facilitation and response guidance
+  required?: boolean;               // For survey forms: whether answering is mandatory
+}
+
+export type ItemType = 'presentation' | 'survey';
+
+export interface SurveySettings {
+  description?: string;
+  collectParticipantInfo?: boolean;   // default true
+  requireName?: boolean;              // default false
+  requireEmail?: boolean;             // default false
+  requireWhatsapp?: boolean;          // default false
+  isAnonymous?: boolean;              // default false (allows respondent to submit anonymously)
+  thankYouMessage?: string;           // custom confirmation message
+  allowMultipleSubmissions?: boolean; // default true
+  submitButtonText?: string;          // default "Submit Feedback"
 }
 
 export interface Presentation {
   id: string;
   title: string;
-  code: string;                     // 6-digit room code e.g. "829143"
+  code: string;                     // 6-digit room code or survey share code e.g. "829143"
+  type?: ItemType;                  // 'presentation' (live poll) or 'survey' (google form style)
+  description?: string;             // intro description for survey
+  surveySettings?: SurveySettings;  // survey configuration
   currentQuestionIndex: number;
   isLive: boolean;
   isLocked: boolean;

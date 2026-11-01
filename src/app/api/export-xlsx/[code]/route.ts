@@ -1,8 +1,36 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { Presentation, Participant, ResponseSubmission } from '@/types';
+import { Presentation, Participant, ResponseSubmission, Question } from '@/types';
 import { getSupabase, isSupabaseConfigured } from '@/lib/supabase';
 import { getStoreData } from '@/lib/server-store';
 import * as XLSX from 'xlsx';
+
+function formatAnswer(q: Question | undefined, rawValue: string): string {
+  if (!q || !rawValue) return rawValue || '';
+
+  if (q.type === 'mcq' && q.options) {
+    const matched = q.options.find((opt) => opt.id === rawValue);
+    if (matched) return matched.text;
+  } else if (q.type === 'multiple_choice' && q.options) {
+    try {
+      const ids: string[] = JSON.parse(rawValue);
+      if (Array.isArray(ids)) {
+        const labels = ids
+          .map((id) => q.options?.find((opt) => opt.id === id)?.text || id)
+          .filter(Boolean);
+        return labels.join(', ');
+      }
+    } catch {
+      // not JSON array, might be single ID
+      const matched = q.options.find((opt) => opt.id === rawValue);
+      if (matched) return matched.text;
+    }
+  } else if (q.type === 'true_false') {
+    if (rawValue === 'true') return 'True';
+    if (rawValue === 'false') return 'False';
+  }
+
+  return rawValue;
+}
 
 export async function GET(
   req: NextRequest,
@@ -29,6 +57,9 @@ export async function GET(
           id: presData.id,
           title: presData.title,
           code: presData.code,
+          type: presData.type || (presData.id?.startsWith('survey_') ? 'survey' : 'presentation'),
+          description: presData.description || '',
+          surveySettings: presData.survey_settings || presData.surveySettings || undefined,
           currentQuestionIndex: presData.current_question_index,
           isLive: presData.is_live,
           isLocked: presData.is_locked,
@@ -89,138 +120,234 @@ export async function GET(
   }
 
   if (!presentation) {
-    return new NextResponse('Presentation not found', { status: 404 });
+    return new NextResponse('Survey / Presentation not found', { status: 404 });
   }
 
   const questionMap = new Map(presentation.questions.map((q) => [q.id, q]));
 
-  // Sheet 1: All Responses Row by Row
-  const responsesSheetData = responses.map((r) => {
-    const q = questionMap.get(r.questionId);
-    let readableAnswer = r.value;
-
-    if (q) {
-      if (q.type === 'mcq' && q.options) {
-        const matched = q.options.find((opt) => opt.id === r.value);
-        if (matched) readableAnswer = matched.text;
-      } else if (q.type === 'multiple_choice' && q.options) {
-        try {
-          const ids: string[] = JSON.parse(r.value);
-          const labels = ids
-            .map((id) => q.options?.find((opt) => opt.id === id)?.text || id)
-            .filter(Boolean);
-          readableAnswer = labels.join(', ');
-        } catch {
-          readableAnswer = r.value;
-        }
-      }
+  // Build Respondent Master Directory (merging participants table and distinct response submitters)
+  const respondentsMap = new Map<
+    string,
+    {
+      id: string;
+      name: string;
+      whatsapp: string;
+      email: string;
+      submittedAt: string;
     }
+  >();
 
-    return {
-      'Submitted At': new Date(r.createdAt).toLocaleString(),
-      'Participant Name': r.participantName,
-      'WhatsApp Number': r.participantWhatsapp,
-      'Email Address': r.participantEmail,
-      'Question Title': q?.title || 'Untitled Question',
-      'Question Type': q?.type ? q.type.replace('_', ' ').toUpperCase() : 'UNKNOWN',
-      'Answer / Selection': readableAnswer,
-    };
-  });
-
-  // Sheet 2: Registered Participants List
-  // If participants array is empty, derive from responses
-  const uniqueParticipantsMap = new Map<string, any>();
   participants.forEach((p) => {
-    uniqueParticipantsMap.set(p.id, {
-      'First Name': p.firstName,
-      'Last Name': p.lastName,
-      'WhatsApp Mobile Number': p.whatsapp,
-      'Email Address': p.email,
-      'Joined At': new Date(p.joinedAt).toLocaleString(),
+    respondentsMap.set(p.id, {
+      id: p.id,
+      name: `${p.firstName} ${p.lastName}`.trim() || 'Anonymous',
+      whatsapp: p.whatsapp || '',
+      email: p.email || '',
+      submittedAt: p.joinedAt,
     });
   });
 
   responses.forEach((r) => {
-    if (!uniqueParticipantsMap.has(r.participantId)) {
-      const parts = r.participantName.split(' ');
-      uniqueParticipantsMap.set(r.participantId, {
-        'First Name': parts[0] || r.participantName,
-        'Last Name': parts.slice(1).join(' ') || '',
-        'WhatsApp Mobile Number': r.participantWhatsapp,
-        'Email Address': r.participantEmail,
-        'Joined At': new Date(r.createdAt).toLocaleString(),
+    if (!respondentsMap.has(r.participantId)) {
+      respondentsMap.set(r.participantId, {
+        id: r.participantId,
+        name: r.participantName || 'Anonymous',
+        whatsapp: r.participantWhatsapp || '',
+        email: r.participantEmail || '',
+        submittedAt: r.createdAt,
       });
     }
   });
 
-  const participantsSheetData = Array.from(uniqueParticipantsMap.values()).map((p) => {
-    const totalAnswered = responses.filter(
-      (r) => r.participantWhatsapp === p['WhatsApp Mobile Number'] || r.participantEmail === p['Email Address']
-    ).length;
+  // 1. PRIMARY SHEET: Google Forms Spreadsheet Format (1 row per submission, 1 column per question)
+  const gridSheetData: Record<string, any>[] = [];
+
+  Array.from(respondentsMap.values()).forEach((resp, rowIdx) => {
+    const userResponses = responses.filter((r) => r.participantId === resp.id);
+    const latestTimestamp = userResponses.length > 0
+      ? userResponses[userResponses.length - 1].createdAt
+      : resp.submittedAt;
+
+    const rowObj: Record<string, any> = {
+      'Submission #': rowIdx + 1,
+      'Timestamp': new Date(latestTimestamp).toLocaleString(),
+      'Respondent Name': resp.name,
+      'WhatsApp / Phone': resp.whatsapp || 'N/A',
+      'Email Address': resp.email || 'N/A',
+    };
+
+    // Columns for each question in the presentation/survey
+    presentation.questions.forEach((q, qIdx) => {
+      const match = userResponses.find((r) => r.questionId === q.id);
+      const colHeader = `Q${qIdx + 1}: ${q.title}`;
+      rowObj[colHeader] = match ? formatAnswer(q, match.value) : '';
+    });
+
+    gridSheetData.push(rowObj);
+  });
+
+  // Fallback empty row if no submissions yet
+  if (gridSheetData.length === 0) {
+    const emptyRow: Record<string, any> = {
+      'Submission #': '',
+      'Timestamp': '',
+      'Respondent Name': 'No responses submitted yet',
+      'WhatsApp / Phone': '',
+      'Email Address': '',
+    };
+    presentation.questions.forEach((q, qIdx) => {
+      emptyRow[`Q${qIdx + 1}: ${q.title}`] = '';
+    });
+    gridSheetData.push(emptyRow);
+  }
+
+  // 2. DETAILED SHEET: All Responses Row by Row
+  const detailedSheetData = responses.map((r, idx) => {
+    const q = questionMap.get(r.questionId);
     return {
-      ...p,
-      'Total Answers Submitted': totalAnswered,
+      'Record #': idx + 1,
+      'Submitted At': new Date(r.createdAt).toLocaleString(),
+      'Respondent Name': r.participantName || 'Anonymous',
+      'WhatsApp Number': r.participantWhatsapp || 'N/A',
+      'Email Address': r.participantEmail || 'N/A',
+      'Question Title': q?.title || 'Untitled Question',
+      'Question Type': q?.type ? q.type.replace('_', ' ').toUpperCase() : 'UNKNOWN',
+      'Answer / Selection': formatAnswer(q, r.value),
     };
   });
 
-  // Sheet 3: Questions Overview
+  // 3. RESPONDENTS LIST SHEET
+  const respondentsSheetData = Array.from(respondentsMap.values()).map((resp, idx) => {
+    const answeredCount = responses.filter((r) => r.participantId === resp.id).length;
+    return {
+      '#': idx + 1,
+      'Respondent Name': resp.name,
+      'WhatsApp Mobile Number': resp.whatsapp || 'N/A',
+      'Email Address': resp.email || 'N/A',
+      'First Recorded At': new Date(resp.submittedAt).toLocaleString(),
+      'Total Questions Answered': answeredCount,
+      'Completion Status': answeredCount >= presentation.questions.length ? 'Completed' : 'Partial',
+    };
+  });
+
+  // 4. QUESTIONS OVERVIEW & STATS SHEET
   const questionsSheetData = presentation.questions.map((q, idx) => {
-    const totalQResponses = responses.filter((r) => r.questionId === q.id).length;
+    const qResponses = responses.filter((r) => r.questionId === q.id);
     const choices = q.options ? q.options.map((o) => o.text).join(' | ') : 'N/A';
 
+    let statsSummary = `${qResponses.length} answers`;
+    if (q.type === 'rating_scale' && qResponses.length > 0) {
+      const sum = qResponses.reduce((acc, r) => acc + (parseFloat(r.value) || 0), 0);
+      const avg = (sum / qResponses.length).toFixed(1);
+      statsSummary += ` (Average: ${avg} / ${q.maxRating || 5})`;
+    }
+
     return {
-      'Slide #': idx + 1,
+      'Question #': idx + 1,
       'Question Title': q.title,
       'Question Type': q.type.replace('_', ' ').toUpperCase(),
-      'Choices / Options': choices,
-      'Total Responses Received': totalQResponses,
+      'Required': q.required ? 'YES' : 'NO',
+      'Choices / Scale': choices,
+      'Total Responses Received': qResponses.length,
+      'Quick Stats': statsSummary,
     };
   });
 
   // Build Excel Workbook
   const workbook = XLSX.utils.book_new();
 
-  const wsResponses = XLSX.utils.json_to_sheet(
-    responsesSheetData.length > 0
-      ? responsesSheetData
+  // Primary Sheet: Form Responses Grid
+  const wsGrid = XLSX.utils.json_to_sheet(gridSheetData);
+  const gridColWidths = [
+    { wch: 14 }, // Submission #
+    { wch: 22 }, // Timestamp
+    { wch: 25 }, // Respondent Name
+    { wch: 20 }, // WhatsApp / Phone
+    { wch: 28 }, // Email Address
+    ...presentation.questions.map(() => ({ wch: 35 })), // Each Question column
+  ];
+  wsGrid['!cols'] = gridColWidths;
+  XLSX.utils.book_append_sheet(
+    workbook,
+    wsGrid,
+    presentation.type === 'survey' ? 'Survey Responses (Grid)' : 'Form Responses (Grid)'
+  );
+
+  // Sheet 2: Detailed Responses
+  const wsDetailed = XLSX.utils.json_to_sheet(
+    detailedSheetData.length > 0
+      ? detailedSheetData
       : [
           {
+            'Record #': '',
             'Submitted At': '',
-            'Participant Name': '',
+            'Respondent Name': 'No responses yet',
             'WhatsApp Number': '',
             'Email Address': '',
-            'Question Title': 'No responses submitted yet',
+            'Question Title': '',
             'Question Type': '',
             'Answer / Selection': '',
           },
         ]
   );
-  XLSX.utils.book_append_sheet(workbook, wsResponses, 'Responses');
+  wsDetailed['!cols'] = [
+    { wch: 10 },
+    { wch: 22 },
+    { wch: 24 },
+    { wch: 20 },
+    { wch: 28 },
+    { wch: 35 },
+    { wch: 18 },
+    { wch: 35 },
+  ];
+  XLSX.utils.book_append_sheet(workbook, wsDetailed, 'Detailed Responses');
 
-  const wsParticipants = XLSX.utils.json_to_sheet(
-    participantsSheetData.length > 0
-      ? participantsSheetData
+  // Sheet 3: Respondents Summary
+  const wsRespondents = XLSX.utils.json_to_sheet(
+    respondentsSheetData.length > 0
+      ? respondentsSheetData
       : [
           {
-            'First Name': '',
-            'Last Name': '',
+            '#': '',
+            'Respondent Name': 'No respondents yet',
             'WhatsApp Mobile Number': '',
             'Email Address': '',
-            'Joined At': '',
-            'Total Answers Submitted': 0,
+            'First Recorded At': '',
+            'Total Questions Answered': 0,
+            'Completion Status': '',
           },
         ]
   );
-  XLSX.utils.book_append_sheet(workbook, wsParticipants, 'Participants List');
+  wsRespondents['!cols'] = [
+    { wch: 8 },
+    { wch: 25 },
+    { wch: 22 },
+    { wch: 28 },
+    { wch: 22 },
+    { wch: 25 },
+    { wch: 18 },
+  ];
+  XLSX.utils.book_append_sheet(workbook, wsRespondents, 'Respondents List');
 
+  // Sheet 4: Questions Overview
   const wsQuestions = XLSX.utils.json_to_sheet(questionsSheetData);
+  wsQuestions['!cols'] = [
+    { wch: 12 },
+    { wch: 40 },
+    { wch: 20 },
+    { wch: 12 },
+    { wch: 35 },
+    { wch: 25 },
+    { wch: 30 },
+  ];
   XLSX.utils.book_append_sheet(workbook, wsQuestions, 'Questions Summary');
 
   // Generate buffer
   const buffer = XLSX.write(workbook, { type: 'buffer', bookType: 'xlsx' });
 
   const safeTitle = presentation.title.replace(/[^a-zA-Z0-9_-]/g, '_').slice(0, 30);
-  const fileName = `${safeTitle}_${code}_Responses_${new Date().toISOString().slice(0, 10)}.xlsx`;
+  const typeTag = presentation.type === 'survey' ? 'Survey_Responses' : 'Responses';
+  const fileName = `${safeTitle}_${code}_${typeTag}_${new Date().toISOString().slice(0, 10)}.xlsx`;
 
   return new NextResponse(buffer, {
     status: 200,

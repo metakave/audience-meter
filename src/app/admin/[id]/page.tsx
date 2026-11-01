@@ -19,6 +19,13 @@ import {
   Settings,
   GripVertical,
   FileSpreadsheet,
+  Share2,
+  Copy,
+  ExternalLink,
+  Eye,
+  CheckCircle2,
+  Sliders,
+  Check,
 } from 'lucide-react';
 import ThemeToggle from '@/components/ThemeToggle';
 import AdminGuard from '@/components/AdminGuard';
@@ -46,6 +53,8 @@ function EditorContent({ params }: { params: Promise<{ id: string }> }) {
   const [saving, setSaving] = useState(false);
   const [saveSuccess, setSaveSuccess] = useState(false);
   const [loading, setLoading] = useState(true);
+  const [copiedLink, setCopiedLink] = useState(false);
+  const [showSettingsModal, setShowSettingsModal] = useState(false);
 
   useEffect(() => {
     async function load() {
@@ -200,6 +209,36 @@ function EditorContent({ params }: { params: Promise<{ id: string }> }) {
     handleUpdateActiveQuestion('options', updated);
   };
 
+  const handleCopyShareLink = () => {
+    if (!presentation) return;
+    const shareUrl = `${window.location.origin}/survey/${presentation.code}`;
+    navigator.clipboard.writeText(shareUrl);
+    setCopiedLink(true);
+    setTimeout(() => setCopiedLink(false), 2500);
+  };
+
+  const handleUpdateDescription = (description: string) => {
+    if (!presentation) return;
+    setPresentation({ ...presentation, description });
+  };
+
+  const handleUpdateSettings = (key: string, val: any) => {
+    if (!presentation) return;
+    setPresentation({
+      ...presentation,
+      surveySettings: {
+        ...(presentation.surveySettings || {}),
+        [key]: val,
+      },
+    });
+  };
+
+  const handleToggleMode = () => {
+    if (!presentation) return;
+    const newType = presentation.type === 'survey' ? 'presentation' : 'survey';
+    setPresentation({ ...presentation, type: newType });
+  };
+
   const handleSave = async () => {
     if (!presentation) return;
     setSaving(true);
@@ -262,10 +301,84 @@ function EditorContent({ params }: { params: Promise<{ id: string }> }) {
           />
 
           <span className="code-pill">PIN: {presentation.code}</span>
+
+          <span
+            onClick={handleToggleMode}
+            title="Click to switch between Survey Form and Live Presentation"
+            style={{
+              display: 'inline-flex',
+              alignItems: 'center',
+              gap: '6px',
+              fontSize: '0.78rem',
+              fontWeight: 700,
+              padding: '4px 10px',
+              borderRadius: '9999px',
+              cursor: 'pointer',
+              background: presentation.type === 'survey' ? 'rgba(168, 85, 247, 0.15)' : 'rgba(99, 102, 241, 0.15)',
+              border: `1px solid ${presentation.type === 'survey' ? 'rgba(168, 85, 247, 0.4)' : 'rgba(99, 102, 241, 0.4)'}`,
+              color: presentation.type === 'survey' ? '#c084fc' : '#818cf8',
+              transition: 'all 0.15s ease',
+            }}
+          >
+            {presentation.type === 'survey' ? '📋 Survey Form' : '⚡ Live Poll'}
+          </span>
         </div>
 
-        <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
           <ThemeToggle />
+
+          {presentation.type === 'survey' && (
+            <button
+              type="button"
+              onClick={handleCopyShareLink}
+              className="btn-secondary"
+              title="Copy shareable survey link to clipboard"
+              style={{
+                fontSize: '0.85rem',
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: '6px',
+                color: copiedLink ? '#10b981' : 'inherit',
+              }}
+            >
+              {copiedLink ? <Check size={15} color="#10b981" /> : <Share2 size={15} />}
+              {copiedLink ? 'Link Copied!' : 'Copy Share Link'}
+            </button>
+          )}
+
+          {presentation.type === 'survey' ? (
+            <a
+              href={`/survey/${presentation.code}`}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="btn-secondary"
+              title="Preview the respondent survey form"
+              style={{ fontSize: '0.85rem', display: 'inline-flex', alignItems: 'center', gap: '6px' }}
+            >
+              <Eye size={15} /> Preview Form
+            </a>
+          ) : (
+            <a
+              href={`/present/${presentation.code}`}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="btn-primary"
+              style={{ fontSize: '0.85rem' }}
+            >
+              <Play size={15} fill="#ffffff" /> Launch Presenter
+            </a>
+          )}
+
+          <button
+            type="button"
+            onClick={() => setShowSettingsModal(true)}
+            className="btn-secondary"
+            title="Configure survey description, contact fields, and settings"
+            style={{ fontSize: '0.85rem', display: 'inline-flex', alignItems: 'center', gap: '6px' }}
+          >
+            <Sliders size={15} /> Form Settings
+          </button>
+
           <a
             href={`/api/export-xlsx/${presentation.code}`}
             download
@@ -275,32 +388,23 @@ function EditorContent({ params }: { params: Promise<{ id: string }> }) {
           >
             <FileSpreadsheet size={15} /> Export Excel
           </a>
+
           <button
             onClick={handleSave}
             disabled={saving}
-            className="btn-secondary"
-            style={{ fontSize: '0.9rem' }}
+            className="btn-primary"
+            style={{ fontSize: '0.85rem' }}
           >
             {saveSuccess ? (
               <>
-                <CheckCircle size={16} color="#10b981" /> Saved!
+                <CheckCircle size={15} color="#ffffff" /> Saved!
               </>
             ) : (
               <>
-                <Save size={16} /> {saving ? 'Saving...' : 'Save Changes'}
+                <Save size={15} /> {saving ? 'Saving...' : 'Save'}
               </>
             )}
           </button>
-
-          <a
-            href={`/present/${presentation.code}`}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="btn-primary"
-            style={{ fontSize: '0.9rem' }}
-          >
-            <Play size={16} fill="#ffffff" /> Launch Presenter View
-          </a>
         </div>
       </header>
 
@@ -643,8 +747,20 @@ function EditorContent({ params }: { params: Promise<{ id: string }> }) {
                 }}
               >
                 <div style={{ fontSize: '0.85rem', fontWeight: 700, color: 'var(--text-secondary)' }}>
-                  Slide Settings
+                  Question & Slide Settings
                 </div>
+
+                <label style={{ display: 'flex', alignItems: 'center', gap: '10px', cursor: 'pointer' }}>
+                  <input
+                    type="checkbox"
+                    checked={activeQuestion.required ?? false}
+                    onChange={(e) => handleUpdateActiveQuestion('required', e.target.checked)}
+                    style={{ width: '18px', height: '18px', accentColor: '#ef4444' }}
+                  />
+                  <span style={{ fontSize: '0.9rem', fontWeight: 600 }}>
+                    Required Question <span style={{ color: '#ef4444' }}>*</span> (Mandatory response in survey form)
+                  </span>
+                </label>
 
                 <label style={{ display: 'flex', alignItems: 'center', gap: '10px', cursor: 'pointer' }}>
                   <input
@@ -653,7 +769,7 @@ function EditorContent({ params }: { params: Promise<{ id: string }> }) {
                     onChange={(e) => handleUpdateActiveQuestion('showResultsToAudience', e.target.checked)}
                     style={{ width: '18px', height: '18px', accentColor: '#6366f1' }}
                   />
-                  <span style={{ fontSize: '0.9rem' }}>Show live results on presentation screen</span>
+                  <span style={{ fontSize: '0.9rem' }}>Show results to participants</span>
                 </label>
 
                 <label style={{ display: 'flex', alignItems: 'center', gap: '10px', cursor: 'pointer' }}>
@@ -674,6 +790,210 @@ function EditorContent({ params }: { params: Promise<{ id: string }> }) {
           )}
         </main>
       </div>
+
+      {/* Form Settings Modal */}
+      {showSettingsModal && (
+        <div
+          style={{
+            position: 'fixed',
+            top: 0,
+            left: 0,
+            right: 0,
+            bottom: 0,
+            background: 'rgba(0, 0, 0, 0.7)',
+            backdropFilter: 'blur(6px)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            zIndex: 1200,
+            padding: '20px',
+          }}
+          onClick={(e) => {
+            if (e.target === e.currentTarget) setShowSettingsModal(false);
+          }}
+        >
+          <div
+            className="glass-panel"
+            style={{
+              width: '100%',
+              maxWidth: '560px',
+              padding: '28px',
+              borderRadius: '16px',
+              maxHeight: '90vh',
+              overflowY: 'auto',
+            }}
+          >
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
+              <div>
+                <h3 style={{ fontSize: '1.25rem', fontWeight: 800 }}>Form & Survey Settings</h3>
+                <p style={{ color: 'var(--text-secondary)', fontSize: '0.85rem' }}>
+                  Configure respondent requirements, instructions, and behavior
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowSettingsModal(false)}
+                className="btn-secondary"
+                style={{ padding: '6px 10px' }}
+              >
+                ✕
+              </button>
+            </div>
+
+            {/* Mode Selector */}
+            <div style={{ marginBottom: '20px' }}>
+              <label style={{ display: 'block', fontSize: '0.85rem', fontWeight: 600, marginBottom: '8px' }}>
+                Item Mode
+              </label>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px' }}>
+                <button
+                  type="button"
+                  onClick={() => setPresentation({ ...presentation, type: 'survey' })}
+                  style={{
+                    padding: '12px',
+                    borderRadius: '10px',
+                    border: `1.5px solid ${presentation.type === 'survey' ? 'var(--accent-primary)' : 'var(--border-subtle)'}`,
+                    background: presentation.type === 'survey' ? 'rgba(99, 102, 241, 0.15)' : 'rgba(255, 255, 255, 0.03)',
+                    textAlign: 'left',
+                    cursor: 'pointer',
+                  }}
+                >
+                  <div style={{ fontWeight: 700, fontSize: '0.92rem', color: presentation.type === 'survey' ? 'var(--accent-primary)' : 'inherit' }}>
+                    📋 Survey Form
+                  </div>
+                  <div style={{ fontSize: '0.78rem', color: 'var(--text-muted)', marginTop: '2px' }}>
+                    Google Form style share link. Anyone can submit feedback.
+                  </div>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => setPresentation({ ...presentation, type: 'presentation' })}
+                  style={{
+                    padding: '12px',
+                    borderRadius: '10px',
+                    border: `1.5px solid ${presentation.type !== 'survey' ? 'var(--accent-primary)' : 'var(--border-subtle)'}`,
+                    background: presentation.type !== 'survey' ? 'rgba(99, 102, 241, 0.15)' : 'rgba(255, 255, 255, 0.03)',
+                    textAlign: 'left',
+                    cursor: 'pointer',
+                  }}
+                >
+                  <div style={{ fontWeight: 700, fontSize: '0.92rem', color: presentation.type !== 'survey' ? 'var(--accent-primary)' : 'inherit' }}>
+                    ⚡ Live Presentation
+                  </div>
+                  <div style={{ fontSize: '0.78rem', color: 'var(--text-muted)', marginTop: '2px' }}>
+                    Presenter screen with audience synchronized polling.
+                  </div>
+                </button>
+              </div>
+            </div>
+
+            {/* Survey Description */}
+            <div style={{ marginBottom: '20px' }}>
+              <label style={{ display: 'block', fontSize: '0.85rem', fontWeight: 600, marginBottom: '6px' }}>
+                Survey Description / Instructions
+              </label>
+              <textarea
+                rows={3}
+                value={presentation.description || ''}
+                onChange={(e) => handleUpdateDescription(e.target.value)}
+                placeholder="Brief introduction or instructions displayed at the top of the survey..."
+                style={{
+                  width: '100%',
+                  padding: '10px 14px',
+                  borderRadius: '8px',
+                  background: 'rgba(255, 255, 255, 0.04)',
+                  border: '1px solid var(--border-subtle)',
+                  color: 'inherit',
+                  fontSize: '0.9rem',
+                }}
+              />
+            </div>
+
+            {/* Contact Fields Settings */}
+            <div style={{ marginBottom: '20px', padding: '16px', borderRadius: '10px', background: 'rgba(255, 255, 255, 0.03)', border: '1px solid var(--border-subtle)' }}>
+              <div style={{ fontSize: '0.85rem', fontWeight: 700, marginBottom: '10px' }}>
+                Respondent Information Requirements
+              </div>
+
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+                <label style={{ display: 'flex', alignItems: 'center', gap: '10px', cursor: 'pointer', fontSize: '0.88rem' }}>
+                  <input
+                    type="checkbox"
+                    checked={presentation.surveySettings?.requireName ?? false}
+                    onChange={(e) => handleUpdateSettings('requireName', e.target.checked)}
+                    style={{ width: '16px', height: '16px' }}
+                  />
+                  <span>Require Full Name</span>
+                </label>
+
+                <label style={{ display: 'flex', alignItems: 'center', gap: '10px', cursor: 'pointer', fontSize: '0.88rem' }}>
+                  <input
+                    type="checkbox"
+                    checked={presentation.surveySettings?.requireWhatsapp ?? false}
+                    onChange={(e) => handleUpdateSettings('requireWhatsapp', e.target.checked)}
+                    style={{ width: '16px', height: '16px' }}
+                  />
+                  <span>Require WhatsApp / Mobile Number</span>
+                </label>
+
+                <label style={{ display: 'flex', alignItems: 'center', gap: '10px', cursor: 'pointer', fontSize: '0.88rem' }}>
+                  <input
+                    type="checkbox"
+                    checked={presentation.surveySettings?.requireEmail ?? false}
+                    onChange={(e) => handleUpdateSettings('requireEmail', e.target.checked)}
+                    style={{ width: '16px', height: '16px' }}
+                  />
+                  <span>Require Email Address</span>
+                </label>
+
+                <label style={{ display: 'flex', alignItems: 'center', gap: '10px', cursor: 'pointer', fontSize: '0.88rem' }}>
+                  <input
+                    type="checkbox"
+                    checked={presentation.surveySettings?.isAnonymous ?? false}
+                    onChange={(e) => handleUpdateSettings('isAnonymous', e.target.checked)}
+                    style={{ width: '16px', height: '16px' }}
+                  />
+                  <span>Allow respondents to submit anonymously</span>
+                </label>
+              </div>
+            </div>
+
+            {/* Thank You Message */}
+            <div style={{ marginBottom: '24px' }}>
+              <label style={{ display: 'block', fontSize: '0.85rem', fontWeight: 600, marginBottom: '6px' }}>
+                Custom Thank You Confirmation Message
+              </label>
+              <input
+                type="text"
+                value={presentation.surveySettings?.thankYouMessage || ''}
+                onChange={(e) => handleUpdateSettings('thankYouMessage', e.target.value)}
+                placeholder="e.g. Thank you! Your feedback helps us improve future workshops."
+                style={{
+                  width: '100%',
+                  padding: '10px 14px',
+                  borderRadius: '8px',
+                  background: 'rgba(255, 255, 255, 0.04)',
+                  border: '1px solid var(--border-subtle)',
+                  color: 'inherit',
+                  fontSize: '0.9rem',
+                }}
+              />
+            </div>
+
+            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '10px' }}>
+              <button
+                type="button"
+                onClick={() => setShowSettingsModal(false)}
+                className="btn-primary"
+                style={{ padding: '10px 20px', fontSize: '0.9rem' }}
+              >
+                Apply Settings
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

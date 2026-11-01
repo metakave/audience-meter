@@ -1,0 +1,1206 @@
+'use client';
+
+import React, { useEffect, useState, use, Suspense, useRef } from 'react';
+import Link from 'next/link';
+import {
+  fetchPresentation,
+  getLocalParticipant,
+  saveLocalParticipant,
+  submitSurvey,
+} from '@/lib/storage';
+import { Presentation, Participant, ResponseSubmission, Question } from '@/types';
+import confetti from 'canvas-confetti';
+import {
+  CheckCircle2,
+  AlertCircle,
+  Sparkles,
+  Send,
+  RotateCcw,
+  User,
+  Phone,
+  Mail,
+  ShieldCheck,
+  Star,
+  Check,
+  HelpCircle,
+  FileText,
+  Clock,
+  ArrowRight,
+} from 'lucide-react';
+import ThemeToggle from '@/components/ThemeToggle';
+
+function SurveyFormContent({ params }: { params: Promise<{ code: string }> }) {
+  const { code } = use(params);
+
+  const [loading, setLoading] = useState(true);
+  const [survey, setSurvey] = useState<Presentation | null>(null);
+
+  // Respondent info state
+  const [fullName, setFullName] = useState('');
+  const [whatsapp, setWhatsapp] = useState('');
+  const [email, setEmail] = useState('');
+  const [isAnonymous, setIsAnonymous] = useState(false);
+
+  // Answers map: questionId -> value (string or JSON string for multiple_choice)
+  const [answers, setAnswers] = useState<Record<string, any>>({});
+  const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
+
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [isSubmitted, setIsSubmitted] = useState(false);
+  const [submitError, setSubmitError] = useState<string | null>(null);
+
+  const questionRefs = useRef<Record<string, HTMLDivElement | null>>({});
+
+  // 1. Load survey and restore saved respondent info
+  useEffect(() => {
+    async function load() {
+      setLoading(true);
+      const data = await fetchPresentation(code);
+      setSurvey(data);
+
+      const saved = getLocalParticipant();
+      if (saved) {
+        const name = `${saved.firstName || ''} ${saved.lastName || ''}`.trim();
+        if (name) setFullName(name);
+        if (saved.whatsapp) setWhatsapp(saved.whatsapp);
+        if (saved.email) setEmail(saved.email);
+      }
+
+      setLoading(false);
+    }
+    load();
+  }, [code]);
+
+  // Handle single choice selection
+  const handleSelectOption = (questionId: string, optionId: string) => {
+    setAnswers((prev) => ({ ...prev, [questionId]: optionId }));
+    if (fieldErrors[questionId]) {
+      setFieldErrors((prev) => {
+        const next = { ...prev };
+        delete next[questionId];
+        return next;
+      });
+    }
+  };
+
+  // Handle multiple choice selection
+  const handleToggleMultiple = (questionId: string, optionId: string, max?: number) => {
+    const current: string[] = answers[questionId] ? (Array.isArray(answers[questionId]) ? answers[questionId] : []) : [];
+    let updated: string[];
+
+    if (current.includes(optionId)) {
+      updated = current.filter((id) => id !== optionId);
+    } else {
+      if (max && current.length >= max) {
+        // Exceeds max selections, don't add
+        return;
+      }
+      updated = [...current, optionId];
+    }
+
+    setAnswers((prev) => ({ ...prev, [questionId]: updated }));
+    if (fieldErrors[questionId]) {
+      setFieldErrors((prev) => {
+        const next = { ...prev };
+        delete next[questionId];
+        return next;
+      });
+    }
+  };
+
+  // Handle text input
+  const handleTextChange = (questionId: string, value: string) => {
+    setAnswers((prev) => ({ ...prev, [questionId]: value }));
+    if (fieldErrors[questionId]) {
+      setFieldErrors((prev) => {
+        const next = { ...prev };
+        delete next[questionId];
+        return next;
+      });
+    }
+  };
+
+  // Handle rating scale
+  const handleRatingSelect = (questionId: string, rating: number) => {
+    setAnswers((prev) => ({ ...prev, [questionId]: rating.toString() }));
+    if (fieldErrors[questionId]) {
+      setFieldErrors((prev) => {
+        const next = { ...prev };
+        delete next[questionId];
+        return next;
+      });
+    }
+  };
+
+  // Handle True / False
+  const handleTrueFalseSelect = (questionId: string, value: 'true' | 'false') => {
+    setAnswers((prev) => ({ ...prev, [questionId]: value }));
+    if (fieldErrors[questionId]) {
+      setFieldErrors((prev) => {
+        const next = { ...prev };
+        delete next[questionId];
+        return next;
+      });
+    }
+  };
+
+  // Validate form before submission
+  const validateForm = (): boolean => {
+    const errors: Record<string, string> = {};
+    const settings = survey?.surveySettings;
+
+    // Contact field validations (if not anonymous)
+    if (!isAnonymous) {
+      if (settings?.requireName && !fullName.trim()) {
+        errors['fullName'] = 'Full Name is required';
+      }
+      if (settings?.requireWhatsapp && !whatsapp.trim()) {
+        errors['whatsapp'] = 'WhatsApp / Mobile Number is required';
+      }
+      if (settings?.requireEmail) {
+        if (!email.trim()) {
+          errors['email'] = 'Email address is required';
+        } else if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim())) {
+          errors['email'] = 'Please enter a valid email address';
+        }
+      }
+    }
+
+    // Question validations
+    survey?.questions.forEach((q) => {
+      if (q.required) {
+        const ans = answers[q.id];
+        if (ans === undefined || ans === null || ans === '') {
+          errors[q.id] = 'This question is required';
+        } else if (Array.isArray(ans) && ans.length === 0) {
+          errors[q.id] = 'Please select at least one option';
+        }
+      }
+    });
+
+    setFieldErrors(errors);
+
+    if (Object.keys(errors).length > 0) {
+      // Scroll to the first error
+      const firstErrorKey = Object.keys(errors)[0];
+      if (firstErrorKey === 'fullName' || firstErrorKey === 'whatsapp' || firstErrorKey === 'email') {
+        window.scrollTo({ top: 120, behavior: 'smooth' });
+      } else {
+        const el = questionRefs.current[firstErrorKey];
+        if (el) {
+          el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        }
+      }
+      return false;
+    }
+
+    return true;
+  };
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!survey) return;
+
+    if (!validateForm()) return;
+
+    setIsSubmitting(true);
+    setSubmitError(null);
+
+    try {
+      // Build participant profile
+      const safeWhatsapp = isAnonymous ? '' : whatsapp.trim();
+      const safeEmail = isAnonymous ? '' : email.trim();
+      const nameParts = (isAnonymous ? 'Anonymous Respondent' : fullName.trim()).split(' ');
+      const firstName = nameParts[0] || 'Anonymous';
+      const lastName = nameParts.slice(1).join(' ');
+
+      const participantId = `part_${Date.now()}_${Math.random().toString(36).substring(2, 8)}`;
+
+      const participant: Participant = {
+        id: participantId,
+        presentationId: survey.id,
+        roomCode: survey.code,
+        firstName,
+        lastName,
+        whatsapp: safeWhatsapp,
+        email: safeEmail,
+        joinedAt: new Date().toISOString(),
+      };
+
+      // Save to localStorage if not anonymous
+      if (!isAnonymous && (fullName.trim() || whatsapp.trim())) {
+        saveLocalParticipant({
+          firstName,
+          lastName,
+          whatsapp: safeWhatsapp,
+          email: safeEmail,
+        });
+      }
+
+      // Build submissions array for answered questions
+      const submissions: ResponseSubmission[] = [];
+      const timestamp = new Date().toISOString();
+
+      survey.questions.forEach((q) => {
+        const val = answers[q.id];
+        if (val !== undefined && val !== null && val !== '') {
+          let stringValue: string;
+          if (Array.isArray(val)) {
+            stringValue = JSON.stringify(val);
+          } else {
+            stringValue = val.toString();
+          }
+
+          submissions.push({
+            id: `resp_${participantId}_${q.id}`,
+            presentationId: survey.id,
+            questionId: q.id,
+            participantId,
+            participantName: isAnonymous ? 'Anonymous' : (fullName.trim() || 'Anonymous'),
+            participantWhatsapp: safeWhatsapp,
+            participantEmail: safeEmail,
+            value: stringValue,
+            createdAt: timestamp,
+          });
+        }
+      });
+
+      // Submit all responses at once
+      const success = await submitSurvey(participant, submissions, survey.code);
+
+      if (success) {
+        setIsSubmitted(true);
+        // Confetti celebration
+        try {
+          confetti({
+            particleCount: 120,
+            spread: 80,
+            origin: { y: 0.6 },
+          });
+        } catch {}
+      } else {
+        setSubmitError('Failed to record your feedback. Please check your connection and try again.');
+      }
+    } catch (err: any) {
+      console.error('Submission error:', err);
+      setSubmitError(err?.message || 'An unexpected error occurred while submitting.');
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
+  const handleResetForAnotherResponse = () => {
+    setAnswers({});
+    setFieldErrors({});
+    setIsSubmitted(false);
+    setSubmitError(null);
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  };
+
+  // Loading Screen
+  if (loading) {
+    return (
+      <div style={{ minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+        <div style={{ textAlign: 'center' }}>
+          <div
+            style={{
+              width: '48px',
+              height: '48px',
+              border: '3px solid var(--accent-primary)',
+              borderTopColor: 'transparent',
+              borderRadius: '50%',
+              animation: 'spin 0.8s linear infinite',
+              margin: '0 auto 16px',
+            }}
+          />
+          <p style={{ color: 'var(--text-secondary)', fontSize: '0.95rem' }}>Loading Survey Form...</p>
+        </div>
+      </div>
+    );
+  }
+
+  // Not Found Screen
+  if (!survey) {
+    return (
+      <div style={{ minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '24px' }}>
+        <div className="glass-panel" style={{ maxWidth: '480px', width: '100%', padding: '40px 32px', textAlign: 'center' }}>
+          <AlertCircle size={48} color="#ef4444" style={{ margin: '0 auto 16px' }} />
+          <h2 style={{ fontSize: '1.4rem', fontWeight: 700, marginBottom: '8px' }}>Survey Not Found</h2>
+          <p style={{ color: 'var(--text-secondary)', fontSize: '0.9rem', marginBottom: '24px', lineHeight: 1.5 }}>
+            We could not find an active survey for PIN or share code <strong>{code}</strong>. Please check the link or ask the organizer.
+          </p>
+          <Link href="/" className="btn-primary" style={{ display: 'inline-flex', padding: '10px 20px' }}>
+            Return to Homepage
+          </Link>
+        </div>
+      </div>
+    );
+  }
+
+  // Closed Survey Screen
+  if (survey.isLive === false) {
+    return (
+      <div style={{ minHeight: '100vh', display: 'flex', flexDirection: 'column' }}>
+        <header
+          style={{
+            display: 'flex',
+            justifyContent: 'space-between',
+            alignItems: 'center',
+            padding: '16px 24px',
+            borderBottom: '1px solid var(--border-subtle)',
+          }}
+        >
+          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+            <span style={{ fontSize: '1.2rem' }}>📋</span>
+            <span style={{ fontWeight: 700, fontSize: '1rem' }}>AudienceMeter Forms</span>
+          </div>
+          <ThemeToggle />
+        </header>
+
+        <main style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '24px' }}>
+          <div className="glass-panel" style={{ maxWidth: '520px', width: '100%', padding: '40px 32px', textAlign: 'center' }}>
+            <Clock size={48} color="#f59e0b" style={{ margin: '0 auto 16px' }} />
+            <h2 style={{ fontSize: '1.4rem', fontWeight: 800, marginBottom: '12px' }}>
+              {survey.title}
+            </h2>
+            <div
+              style={{
+                display: 'inline-block',
+                padding: '4px 12px',
+                borderRadius: '9999px',
+                fontSize: '0.8rem',
+                fontWeight: 600,
+                background: 'rgba(239, 68, 68, 0.12)',
+                color: '#ef4444',
+                border: '1px solid rgba(239, 68, 68, 0.25)',
+                marginBottom: '20px',
+              }}
+            >
+              Survey Session Closed
+            </div>
+            <p style={{ color: 'var(--text-secondary)', fontSize: '0.95rem', lineHeight: 1.6, marginBottom: '28px' }}>
+              This survey form is no longer accepting new responses. Thank you for your interest and participation!
+            </p>
+            <Link href="/" className="btn-secondary" style={{ display: 'inline-flex', padding: '10px 20px' }}>
+              Return to Homepage
+            </Link>
+          </div>
+        </main>
+      </div>
+    );
+  }
+
+  // Thank You / Submission Confirmation Screen
+  if (isSubmitted) {
+    return (
+      <div style={{ minHeight: '100vh', display: 'flex', flexDirection: 'column' }}>
+        <header
+          style={{
+            display: 'flex',
+            justifyContent: 'space-between',
+            alignItems: 'center',
+            padding: '16px 24px',
+            borderBottom: '1px solid var(--border-subtle)',
+          }}
+        >
+          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+            <span style={{ fontSize: '1.2rem' }}>📋</span>
+            <span style={{ fontWeight: 700, fontSize: '1rem' }}>AudienceMeter Forms</span>
+          </div>
+          <ThemeToggle />
+        </header>
+
+        <main style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '32px 20px' }}>
+          <div
+            className="glass-panel"
+            style={{
+              maxWidth: '560px',
+              width: '100%',
+              padding: '44px 32px',
+              textAlign: 'center',
+              borderRadius: '20px',
+              boxShadow: 'var(--shadow-glow)',
+            }}
+          >
+            <div
+              style={{
+                width: '64px',
+                height: '64px',
+                borderRadius: '50%',
+                background: 'rgba(16, 185, 129, 0.15)',
+                border: '2px solid rgba(16, 185, 129, 0.4)',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                margin: '0 auto 20px',
+              }}
+            >
+              <CheckCircle2 size={36} color="#10b981" />
+            </div>
+
+            <h1 style={{ fontSize: '1.6rem', fontWeight: 800, marginBottom: '8px' }}>
+              Response Recorded! 🎉
+            </h1>
+            <p style={{ color: 'var(--text-secondary)', fontSize: '1rem', marginBottom: '20px' }}>
+              {survey.title}
+            </p>
+
+            <div
+              style={{
+                background: 'rgba(255, 255, 255, 0.04)',
+                border: '1px solid var(--border-subtle)',
+                borderRadius: '12px',
+                padding: '20px',
+                marginBottom: '28px',
+                textAlign: 'left',
+                fontSize: '0.92rem',
+                lineHeight: 1.6,
+                color: 'var(--text-primary)',
+              }}
+            >
+              {survey.surveySettings?.thankYouMessage ||
+                'Thank you for submitting your feedback! Your answers have been successfully stored in the database.'}
+            </div>
+
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+              {survey.surveySettings?.allowMultipleSubmissions !== false && (
+                <button
+                  type="button"
+                  onClick={handleResetForAnotherResponse}
+                  className="btn-primary"
+                  style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    gap: '8px',
+                    padding: '12px',
+                    fontSize: '0.95rem',
+                  }}
+                >
+                  <RotateCcw size={16} /> Submit Another Response
+                </button>
+              )}
+
+              <Link
+                href="/"
+                className="btn-secondary"
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  gap: '8px',
+                  padding: '12px',
+                  fontSize: '0.95rem',
+                }}
+              >
+                Back to Homepage
+              </Link>
+            </div>
+          </div>
+        </main>
+      </div>
+    );
+  }
+
+  // Main Google Forms-Style Survey View
+  return (
+    <div style={{ minHeight: '100vh', display: 'flex', flexDirection: 'column' }}>
+      {/* Top Navbar */}
+      <header
+        style={{
+          display: 'flex',
+          justifyContent: 'space-between',
+          alignItems: 'center',
+          padding: '16px 32px',
+          borderBottom: '1px solid var(--border-subtle)',
+          backdropFilter: 'blur(10px)',
+          position: 'sticky',
+          top: 0,
+          zIndex: 40,
+        }}
+      >
+        <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+          <div
+            style={{
+              width: '32px',
+              height: '32px',
+              borderRadius: '8px',
+              background: 'linear-gradient(135deg, #6366f1, #a855f7)',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              color: '#ffffff',
+              fontWeight: 800,
+              fontSize: '1rem',
+            }}
+          >
+            📋
+          </div>
+          <div>
+            <div style={{ fontSize: '1rem', fontWeight: 800, letterSpacing: '-0.3px' }}>
+              AudienceMeter Forms
+            </div>
+          </div>
+        </div>
+
+        <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+          <span
+            style={{
+              display: 'inline-flex',
+              alignItems: 'center',
+              gap: '6px',
+              fontSize: '0.78rem',
+              fontWeight: 600,
+              color: '#10b981',
+              background: 'rgba(16, 185, 129, 0.1)',
+              border: '1px solid rgba(16, 185, 129, 0.25)',
+              padding: '4px 10px',
+              borderRadius: '9999px',
+            }}
+          >
+            ● Accepting Responses
+          </span>
+          <ThemeToggle />
+        </div>
+      </header>
+
+      {/* Main Container */}
+      <main style={{ flex: 1, padding: '36px 16px 64px', maxWidth: '760px', margin: '0 auto', width: '100%' }}>
+        <form onSubmit={handleSubmit} noValidate>
+          {/* Survey Header Card (Google Forms Banner Card) */}
+          <div
+            className="glass-panel"
+            style={{
+              borderRadius: '16px',
+              overflow: 'hidden',
+              marginBottom: '20px',
+              position: 'relative',
+              boxShadow: '0 8px 30px rgba(0,0,0,0.12)',
+            }}
+          >
+            {/* Top Colored Accent Stripe */}
+            <div
+              style={{
+                height: '10px',
+                background: 'linear-gradient(90deg, #6366f1, #a855f7, #ec4899)',
+                width: '100%',
+              }}
+            />
+
+            <div style={{ padding: '32px 28px 28px' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '12px', flexWrap: 'wrap', marginBottom: '8px' }}>
+                <h1 style={{ fontSize: '1.85rem', fontWeight: 800, lineHeight: 1.25, letterSpacing: '-0.5px' }}>
+                  {survey.title}
+                </h1>
+                <span className="code-pill" title="Survey Share Code">
+                  Code: {survey.code}
+                </span>
+              </div>
+
+              {survey.description && (
+                <p
+                  style={{
+                    color: 'var(--text-secondary)',
+                    fontSize: '0.98rem',
+                    lineHeight: 1.6,
+                    marginTop: '12px',
+                    whiteSpace: 'pre-line',
+                  }}
+                >
+                  {survey.description}
+                </p>
+              )}
+
+              <div
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '16px',
+                  marginTop: '20px',
+                  paddingTop: '16px',
+                  borderTop: '1px solid var(--border-subtle)',
+                  fontSize: '0.82rem',
+                  color: 'var(--text-muted)',
+                }}
+              >
+                <span>{survey.questions.length} questions</span>
+                <span>•</span>
+                <span style={{ color: '#ef4444', fontWeight: 600 }}>* Indicates required question</span>
+              </div>
+            </div>
+          </div>
+
+          {/* Respondent Contact Info Card */}
+          {survey.surveySettings?.collectParticipantInfo !== false && (
+            <div
+              className="glass-panel"
+              style={{
+                borderRadius: '16px',
+                padding: '24px 28px',
+                marginBottom: '20px',
+                border: '1px solid var(--border-subtle)',
+              }}
+            >
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px', flexWrap: 'wrap', gap: '8px' }}>
+                <div>
+                  <h2 style={{ fontSize: '1.15rem', fontWeight: 700 }}>Respondent Details</h2>
+                  <p style={{ color: 'var(--text-secondary)', fontSize: '0.85rem' }}>
+                    {survey.surveySettings?.isAnonymous
+                      ? 'You can provide your details or choose to submit anonymously.'
+                      : 'Please provide your details below.'}
+                  </p>
+                </div>
+
+                {survey.surveySettings?.isAnonymous && (
+                  <label
+                    style={{
+                      display: 'inline-flex',
+                      alignItems: 'center',
+                      gap: '8px',
+                      fontSize: '0.82rem',
+                      fontWeight: 600,
+                      cursor: 'pointer',
+                      padding: '6px 12px',
+                      borderRadius: '8px',
+                      background: isAnonymous ? 'rgba(99, 102, 241, 0.15)' : 'rgba(255, 255, 255, 0.05)',
+                      border: `1px solid ${isAnonymous ? 'var(--accent-primary)' : 'var(--border-subtle)'}`,
+                      color: isAnonymous ? 'var(--accent-primary)' : 'var(--text-secondary)',
+                      userSelect: 'none',
+                    }}
+                  >
+                    <input
+                      type="checkbox"
+                      checked={isAnonymous}
+                      onChange={(e) => setIsAnonymous(e.target.checked)}
+                      style={{ cursor: 'pointer' }}
+                    />
+                    <span>Submit Anonymously</span>
+                  </label>
+                )}
+              </div>
+
+              {!isAnonymous && (
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '16px' }}>
+                  {/* Full Name */}
+                  <div>
+                    <label style={{ display: 'block', fontSize: '0.82rem', fontWeight: 600, marginBottom: '6px' }}>
+                      Full Name {survey.surveySettings?.requireName && <span style={{ color: '#ef4444' }}>*</span>}
+                    </label>
+                    <div style={{ position: 'relative' }}>
+                      <User size={15} style={{ position: 'absolute', left: '12px', top: '12px', color: 'var(--text-muted)' }} />
+                      <input
+                        type="text"
+                        value={fullName}
+                        onChange={(e) => {
+                          setFullName(e.target.value);
+                          if (fieldErrors['fullName']) {
+                            setFieldErrors((prev) => {
+                              const next = { ...prev };
+                              delete next['fullName'];
+                              return next;
+                            });
+                          }
+                        }}
+                        placeholder="John Doe"
+                        style={{
+                          width: '100%',
+                          padding: '10px 12px 10px 36px',
+                          background: 'rgba(255, 255, 255, 0.05)',
+                          border: `1px solid ${fieldErrors['fullName'] ? '#ef4444' : 'var(--border-subtle)'}`,
+                          borderRadius: '8px',
+                          fontSize: '0.9rem',
+                          color: 'inherit',
+                        }}
+                      />
+                    </div>
+                    {fieldErrors['fullName'] && (
+                      <span style={{ color: '#ef4444', fontSize: '0.78rem', marginTop: '4px', display: 'block' }}>
+                        {fieldErrors['fullName']}
+                      </span>
+                    )}
+                  </div>
+
+                  {/* WhatsApp */}
+                  <div>
+                    <label style={{ display: 'block', fontSize: '0.82rem', fontWeight: 600, marginBottom: '6px' }}>
+                      WhatsApp / Mobile {survey.surveySettings?.requireWhatsapp && <span style={{ color: '#ef4444' }}>*</span>}
+                    </label>
+                    <div style={{ position: 'relative' }}>
+                      <Phone size={15} style={{ position: 'absolute', left: '12px', top: '12px', color: 'var(--text-muted)' }} />
+                      <input
+                        type="tel"
+                        value={whatsapp}
+                        onChange={(e) => {
+                          setWhatsapp(e.target.value);
+                          if (fieldErrors['whatsapp']) {
+                            setFieldErrors((prev) => {
+                              const next = { ...prev };
+                              delete next['whatsapp'];
+                              return next;
+                            });
+                          }
+                        }}
+                        placeholder="+1 234 567 8900"
+                        style={{
+                          width: '100%',
+                          padding: '10px 12px 10px 36px',
+                          background: 'rgba(255, 255, 255, 0.05)',
+                          border: `1px solid ${fieldErrors['whatsapp'] ? '#ef4444' : 'var(--border-subtle)'}`,
+                          borderRadius: '8px',
+                          fontSize: '0.9rem',
+                          color: 'inherit',
+                        }}
+                      />
+                    </div>
+                    {fieldErrors['whatsapp'] && (
+                      <span style={{ color: '#ef4444', fontSize: '0.78rem', marginTop: '4px', display: 'block' }}>
+                        {fieldErrors['whatsapp']}
+                      </span>
+                    )}
+                  </div>
+
+                  {/* Email */}
+                  <div>
+                    <label style={{ display: 'block', fontSize: '0.82rem', fontWeight: 600, marginBottom: '6px' }}>
+                      Email Address {survey.surveySettings?.requireEmail && <span style={{ color: '#ef4444' }}>*</span>}
+                    </label>
+                    <div style={{ position: 'relative' }}>
+                      <Mail size={15} style={{ position: 'absolute', left: '12px', top: '12px', color: 'var(--text-muted)' }} />
+                      <input
+                        type="email"
+                        value={email}
+                        onChange={(e) => {
+                          setEmail(e.target.value);
+                          if (fieldErrors['email']) {
+                            setFieldErrors((prev) => {
+                              const next = { ...prev };
+                              delete next['email'];
+                              return next;
+                            });
+                          }
+                        }}
+                        placeholder="john@example.com"
+                        style={{
+                          width: '100%',
+                          padding: '10px 12px 10px 36px',
+                          background: 'rgba(255, 255, 255, 0.05)',
+                          border: `1px solid ${fieldErrors['email'] ? '#ef4444' : 'var(--border-subtle)'}`,
+                          borderRadius: '8px',
+                          fontSize: '0.9rem',
+                          color: 'inherit',
+                        }}
+                      />
+                    </div>
+                    {fieldErrors['email'] && (
+                      <span style={{ color: '#ef4444', fontSize: '0.78rem', marginTop: '4px', display: 'block' }}>
+                        {fieldErrors['email']}
+                      </span>
+                    )}
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* Questions List */}
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
+            {survey.questions.map((q, idx) => {
+              const hasError = Boolean(fieldErrors[q.id]);
+              const currentAnswer = answers[q.id];
+
+              return (
+                <div
+                  key={q.id}
+                  ref={(el) => {
+                    questionRefs.current[q.id] = el;
+                  }}
+                  className="glass-panel"
+                  style={{
+                    borderRadius: '16px',
+                    padding: '24px 28px',
+                    border: hasError
+                      ? '1px solid #ef4444'
+                      : '1px solid var(--border-subtle)',
+                    boxShadow: hasError ? '0 0 16px rgba(239, 68, 68, 0.2)' : 'none',
+                    transition: 'border-color 0.2s ease, box-shadow 0.2s ease',
+                  }}
+                >
+                  {/* Question Header */}
+                  <div style={{ marginBottom: '16px' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '6px' }}>
+                      <span
+                        style={{
+                          fontSize: '0.74rem',
+                          fontWeight: 700,
+                          textTransform: 'uppercase',
+                          letterSpacing: '0.5px',
+                          padding: '2px 8px',
+                          borderRadius: '6px',
+                          background: 'rgba(99, 102, 241, 0.12)',
+                          color: 'var(--accent-primary)',
+                        }}
+                      >
+                        Question {idx + 1}
+                      </span>
+                      {q.required && (
+                        <span style={{ color: '#ef4444', fontWeight: 700, fontSize: '0.9rem' }} title="Required">
+                          *
+                        </span>
+                      )}
+                    </div>
+
+                    <h3 style={{ fontSize: '1.15rem', fontWeight: 700, lineHeight: 1.4 }}>
+                      {q.title}
+                    </h3>
+
+                    {q.description && (
+                      <p style={{ color: 'var(--text-secondary)', fontSize: '0.85rem', marginTop: '4px' }}>
+                        {q.description}
+                      </p>
+                    )}
+                  </div>
+
+                  {/* Question Inputs */}
+
+                  {/* 1. Single Choice (MCQ) */}
+                  {q.type === 'mcq' && q.options && (
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                      {q.options.map((opt) => {
+                        const isSelected = currentAnswer === opt.id;
+                        return (
+                          <div
+                            key={opt.id}
+                            onClick={() => handleSelectOption(q.id, opt.id)}
+                            style={{
+                              display: 'flex',
+                              alignItems: 'center',
+                              gap: '12px',
+                              padding: '12px 16px',
+                              borderRadius: '10px',
+                              cursor: 'pointer',
+                              background: isSelected ? 'rgba(99, 102, 241, 0.15)' : 'rgba(255, 255, 255, 0.03)',
+                              border: `1.5px solid ${isSelected ? 'var(--accent-primary)' : 'var(--border-subtle)'}`,
+                              transition: 'all 0.15s ease',
+                            }}
+                          >
+                            <div
+                              style={{
+                                width: '18px',
+                                height: '18px',
+                                borderRadius: '50%',
+                                border: `2px solid ${isSelected ? 'var(--accent-primary)' : 'var(--text-muted)'}`,
+                                display: 'flex',
+                                alignItems: 'center',
+                                justifyContent: 'center',
+                                flexShrink: 0,
+                              }}
+                            >
+                              {isSelected && (
+                                <div
+                                  style={{
+                                    width: '8px',
+                                    height: '8px',
+                                    borderRadius: '50%',
+                                    background: 'var(--accent-primary)',
+                                  }}
+                                />
+                              )}
+                            </div>
+                            <span style={{ fontSize: '0.92rem', color: isSelected ? 'var(--text-primary)' : 'var(--text-secondary)' }}>
+                              {opt.text}
+                            </span>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+
+                  {/* 2. Multiple Choice (Checkboxes) */}
+                  {q.type === 'multiple_choice' && q.options && (
+                    <div>
+                      {q.maxSelections && (
+                        <div style={{ fontSize: '0.78rem', color: 'var(--text-muted)', marginBottom: '10px' }}>
+                          Select up to {q.maxSelections} {q.maxSelections === 1 ? 'option' : 'options'}
+                        </div>
+                      )}
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                        {q.options.map((opt) => {
+                          const selectedList: string[] = Array.isArray(currentAnswer) ? currentAnswer : [];
+                          const isSelected = selectedList.includes(opt.id);
+                          return (
+                            <div
+                              key={opt.id}
+                              onClick={() => handleToggleMultiple(q.id, opt.id, q.maxSelections)}
+                              style={{
+                                display: 'flex',
+                                alignItems: 'center',
+                                gap: '12px',
+                                padding: '12px 16px',
+                                borderRadius: '10px',
+                                cursor: 'pointer',
+                                background: isSelected ? 'rgba(99, 102, 241, 0.15)' : 'rgba(255, 255, 255, 0.03)',
+                                border: `1.5px solid ${isSelected ? 'var(--accent-primary)' : 'var(--border-subtle)'}`,
+                                transition: 'all 0.15s ease',
+                              }}
+                            >
+                              <div
+                                style={{
+                                  width: '18px',
+                                  height: '18px',
+                                  borderRadius: '4px',
+                                  border: `2px solid ${isSelected ? 'var(--accent-primary)' : 'var(--text-muted)'}`,
+                                  background: isSelected ? 'var(--accent-primary)' : 'transparent',
+                                  display: 'flex',
+                                  alignItems: 'center',
+                                  justifyContent: 'center',
+                                  flexShrink: 0,
+                                }}
+                              >
+                                {isSelected && <Check size={12} color="#ffffff" strokeWidth={3} />}
+                              </div>
+                              <span style={{ fontSize: '0.92rem', color: isSelected ? 'var(--text-primary)' : 'var(--text-secondary)' }}>
+                                {opt.text}
+                              </span>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* 3. Short Answer */}
+                  {q.type === 'short_answer' && (
+                    <input
+                      type="text"
+                      value={currentAnswer || ''}
+                      onChange={(e) => handleTextChange(q.id, e.target.value)}
+                      placeholder="Your answer..."
+                      style={{
+                        width: '100%',
+                        padding: '12px 16px',
+                        background: 'rgba(255, 255, 255, 0.04)',
+                        border: '1px solid var(--border-subtle)',
+                        borderRadius: '8px',
+                        fontSize: '0.95rem',
+                        color: 'inherit',
+                      }}
+                    />
+                  )}
+
+                  {/* 4. Long Answer */}
+                  {q.type === 'long_answer' && (
+                    <textarea
+                      rows={4}
+                      value={currentAnswer || ''}
+                      onChange={(e) => handleTextChange(q.id, e.target.value)}
+                      placeholder="Type your feedback, comments, or detailed response here..."
+                      style={{
+                        width: '100%',
+                        padding: '12px 16px',
+                        background: 'rgba(255, 255, 255, 0.04)',
+                        border: '1px solid var(--border-subtle)',
+                        borderRadius: '8px',
+                        fontSize: '0.95rem',
+                        color: 'inherit',
+                        lineHeight: 1.5,
+                        resize: 'vertical',
+                      }}
+                    />
+                  )}
+
+                  {/* 5. Rating Scale (1 to 5) */}
+                  {q.type === 'rating_scale' && (
+                    <div>
+                      <div
+                        style={{
+                          display: 'flex',
+                          alignItems: 'center',
+                          justifyContent: 'space-between',
+                          gap: '8px',
+                          flexWrap: 'wrap',
+                          marginBottom: '8px',
+                        }}
+                      >
+                        {Array.from(
+                          { length: (q.maxRating || 5) - (q.minRating || 1) + 1 },
+                          (_, i) => (q.minRating || 1) + i
+                        ).map((num) => {
+                          const isSelected = currentAnswer === num.toString();
+                          return (
+                            <button
+                              key={num}
+                              type="button"
+                              onClick={() => handleRatingSelect(q.id, num)}
+                              style={{
+                                flex: 1,
+                                minWidth: '46px',
+                                height: '50px',
+                                borderRadius: '10px',
+                                border: `1.5px solid ${isSelected ? 'var(--accent-primary)' : 'var(--border-subtle)'}`,
+                                background: isSelected ? 'var(--accent-primary)' : 'rgba(255, 255, 255, 0.04)',
+                                color: isSelected ? '#ffffff' : 'inherit',
+                                fontSize: '1.1rem',
+                                fontWeight: 700,
+                                cursor: 'pointer',
+                                transition: 'all 0.15s ease',
+                                display: 'flex',
+                                alignItems: 'center',
+                                justifyContent: 'center',
+                              }}
+                            >
+                              {num}
+                            </button>
+                          );
+                        })}
+                      </div>
+
+                      <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.78rem', color: 'var(--text-muted)', padding: '0 4px' }}>
+                        <span>Poor (1)</span>
+                        <span>Outstanding ({q.maxRating || 5})</span>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* 6. True / False */}
+                  {q.type === 'true_false' && (
+                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
+                      <button
+                        type="button"
+                        onClick={() => handleTrueFalseSelect(q.id, 'true')}
+                        style={{
+                          padding: '14px',
+                          borderRadius: '10px',
+                          border: `1.5px solid ${currentAnswer === 'true' ? '#10b981' : 'var(--border-subtle)'}`,
+                          background: currentAnswer === 'true' ? 'rgba(16, 185, 129, 0.15)' : 'rgba(255, 255, 255, 0.03)',
+                          color: currentAnswer === 'true' ? '#10b981' : 'inherit',
+                          fontSize: '1rem',
+                          fontWeight: 700,
+                          cursor: 'pointer',
+                          display: 'flex',
+                          alignItems: 'center',
+                          justifyContent: 'center',
+                          gap: '6px',
+                        }}
+                      >
+                        👍 True
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() => handleTrueFalseSelect(q.id, 'false')}
+                        style={{
+                          padding: '14px',
+                          borderRadius: '10px',
+                          border: `1.5px solid ${currentAnswer === 'false' ? '#ef4444' : 'var(--border-subtle)'}`,
+                          background: currentAnswer === 'false' ? 'rgba(239, 68, 68, 0.15)' : 'rgba(255, 255, 255, 0.03)',
+                          color: currentAnswer === 'false' ? '#ef4444' : 'inherit',
+                          fontSize: '1rem',
+                          fontWeight: 700,
+                          cursor: 'pointer',
+                          display: 'flex',
+                          alignItems: 'center',
+                          justifyContent: 'center',
+                          gap: '6px',
+                        }}
+                      >
+                        👎 False
+                      </button>
+                    </div>
+                  )}
+
+                  {/* Inline Error Message */}
+                  {hasError && (
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '6px', color: '#ef4444', fontSize: '0.8rem', marginTop: '10px' }}>
+                      <AlertCircle size={14} />
+                      <span>{fieldErrors[q.id]}</span>
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+
+          {/* Form Submit Footer */}
+          <div style={{ marginTop: '28px', display: 'flex', flexDirection: 'column', gap: '12px' }}>
+            {submitError && (
+              <div
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '8px',
+                  background: 'rgba(239, 68, 68, 0.12)',
+                  border: '1px solid rgba(239, 68, 68, 0.3)',
+                  color: '#ef4444',
+                  padding: '12px 16px',
+                  borderRadius: '10px',
+                  fontSize: '0.88rem',
+                }}
+              >
+                <AlertCircle size={18} />
+                <span>{submitError}</span>
+              </div>
+            )}
+
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '12px' }}>
+              <button
+                type="submit"
+                disabled={isSubmitting}
+                className="btn-primary"
+                style={{
+                  padding: '14px 28px',
+                  fontSize: '1.05rem',
+                  fontWeight: 700,
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  gap: '10px',
+                  cursor: isSubmitting ? 'not-allowed' : 'pointer',
+                  opacity: isSubmitting ? 0.7 : 1,
+                  boxShadow: '0 4px 20px var(--accent-glow)',
+                }}
+              >
+                {isSubmitting ? (
+                  <>
+                    <div
+                      style={{
+                        width: '16px',
+                        height: '16px',
+                        border: '2px solid #ffffff',
+                        borderTopColor: 'transparent',
+                        borderRadius: '50%',
+                        animation: 'spin 0.8s linear infinite',
+                      }}
+                    />
+                    <span>Submitting Feedback...</span>
+                  </>
+                ) : (
+                  <>
+                    <Send size={18} />
+                    <span>{survey.surveySettings?.submitButtonText || 'Submit Survey Feedback'}</span>
+                  </>
+                )}
+              </button>
+
+              <span style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>
+                Powered by AudienceMeter • Responses saved securely
+              </span>
+            </div>
+          </div>
+        </form>
+      </main>
+    </div>
+  );
+}
+
+export default function SurveyPage({ params }: { params: Promise<{ code: string }> }) {
+  return (
+    <Suspense
+      fallback={
+        <div style={{ minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+          <p style={{ color: 'var(--text-secondary)' }}>Loading Survey...</p>
+        </div>
+      }
+    >
+      <SurveyFormContent params={params} />
+    </Suspense>
+  );
+}

@@ -30,6 +30,15 @@ function ensureDataFile(): StoreData {
             if (!data.participants[pres.code]) data.participants[pres.code] = [];
             if (!data.responses[pres.code]) data.responses[pres.code] = [];
             updated = true;
+          } else if (data.presentations[pres.code] && pres.type && !data.presentations[pres.code].type) {
+            data.presentations[pres.code].type = pres.type;
+            if (pres.surveySettings && !data.presentations[pres.code].surveySettings) {
+              data.presentations[pres.code].surveySettings = pres.surveySettings;
+            }
+            if (pres.description && !data.presentations[pres.code].description) {
+              data.presentations[pres.code].description = pres.description;
+            }
+            updated = true;
           }
         }
         if (updated) {

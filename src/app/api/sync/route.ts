@@ -63,6 +63,9 @@ export async function GET(req: NextRequest) {
             id: p.id,
             title: p.title,
             code: p.code,
+            type: p.type || (p.id?.startsWith('survey_') ? 'survey' : 'presentation'),
+            description: p.description || '',
+            surveySettings: p.survey_settings || p.surveySettings || undefined,
             currentQuestionIndex: p.current_question_index,
             isLive: typeof p.is_live === 'boolean' ? p.is_live : true,
             isLocked: typeof p.is_locked === 'boolean' ? p.is_locked : false,
@@ -119,6 +122,9 @@ export async function GET(req: NextRequest) {
           id: pData.id,
           title: pData.title,
           code: pData.code,
+          type: pData.type || (pData.id?.startsWith('survey_') ? 'survey' : 'presentation'),
+          description: pData.description || '',
+          surveySettings: pData.survey_settings || pData.surveySettings || undefined,
           currentQuestionIndex: pData.current_question_index,
           isLive: typeof pData.is_live === 'boolean' ? pData.is_live : true,
           isLocked: typeof pData.is_locked === 'boolean' ? pData.is_locked : false,
@@ -227,6 +233,9 @@ export async function POST(req: NextRequest) {
             id: presentation.id,
             title: presentation.title,
             code: presentation.code,
+            type: presentation.type || (presentation.id?.startsWith('survey_') ? 'survey' : 'presentation'),
+            description: presentation.description || '',
+            survey_settings: presentation.surveySettings || {},
             current_question_index: presentation.currentQuestionIndex,
             is_live: typeof presentation.isLive === 'boolean' ? presentation.isLive : true,
             is_locked: typeof presentation.isLocked === 'boolean' ? presentation.isLocked : false,
@@ -236,9 +245,19 @@ export async function POST(req: NextRequest) {
             updated_at: new Date().toISOString(),
           };
           const { error } = await supabase.from('presentations').upsert(dbPayload);
-          if (error && error.message?.includes('lock_forward_slides')) {
-            delete dbPayload.lock_forward_slides;
-            await supabase.from('presentations').upsert(dbPayload);
+          if (error) {
+            if (
+              error.message?.includes('type') ||
+              error.message?.includes('description') ||
+              error.message?.includes('survey_settings') ||
+              error.message?.includes('lock_forward_slides')
+            ) {
+              delete dbPayload.type;
+              delete dbPayload.description;
+              delete dbPayload.survey_settings;
+              delete dbPayload.lock_forward_slides;
+              await supabase.from('presentations').upsert(dbPayload);
+            }
           }
         } catch (e) {
           console.warn('Supabase save presentation failed:', e);
@@ -324,6 +343,73 @@ export async function POST(req: NextRequest) {
       store.responses[code] = list;
       saveStoreData(store);
       return NextResponse.json({ success: true, count: list.length });
+    }
+
+    if (action === 'submit_survey') {
+      const participant: Participant = body.participant;
+      const submissions: ResponseSubmission[] = body.submissions || [];
+
+      if (isSupabaseConfigured && supabase) {
+        try {
+          if (participant) {
+            await supabase.from('participants').upsert({
+              id: participant.id,
+              presentation_id: participant.presentationId,
+              room_code: participant.roomCode,
+              first_name: participant.firstName,
+              last_name: participant.lastName,
+              whatsapp: participant.whatsapp,
+              email: participant.email,
+              joined_at: participant.joinedAt,
+            });
+          }
+
+          if (submissions.length > 0) {
+            const rows = submissions.map((s) => ({
+              id: s.id,
+              presentation_id: s.presentationId,
+              question_id: s.questionId,
+              participant_id: s.participantId,
+              participant_name: s.participantName,
+              participant_whatsapp: s.participantWhatsapp,
+              participant_email: s.participantEmail,
+              value: s.value,
+              created_at: s.createdAt,
+            }));
+            await supabase.from('responses').upsert(rows, { onConflict: 'id' });
+          }
+        } catch (e) {
+          console.warn('Supabase submit_survey batch failed:', e);
+        }
+      }
+
+      if (participant) {
+        const pList = store.participants[code] || [];
+        const existingPIdx = pList.findIndex((p: Participant) => p.id === participant.id);
+        if (existingPIdx >= 0) {
+          pList[existingPIdx] = participant;
+        } else {
+          pList.push(participant);
+        }
+        store.participants[code] = pList;
+      }
+
+      const rList = store.responses[code] || [];
+      for (const s of submissions) {
+        const existingIdx = rList.findIndex(
+          (r: ResponseSubmission) =>
+            r.participantId === s.participantId && r.questionId === s.questionId
+        );
+        if (existingIdx >= 0) {
+          rList[existingIdx] = s;
+        } else {
+          rList.push(s);
+        }
+      }
+      store.responses[code] = rList;
+      saveStoreData(store);
+
+      return NextResponse.json({ success: true, count: rList.length });
     }
 
     if (action === 'update_slide') {

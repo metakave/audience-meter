@@ -28,6 +28,12 @@ import {
   X,
   CheckCircle2,
   Loader2,
+  Share2,
+  Eye,
+  FileText,
+  BarChart3,
+  Copy,
+  Check,
 } from 'lucide-react';
 import ThemeToggle from '@/components/ThemeToggle';
 import AdminGuard, { lockAdminSession } from '@/components/AdminGuard';
@@ -36,8 +42,20 @@ export default function AdminDashboardPage() {
   const [presentations, setPresentations] = useState<Presentation[]>([]);
   const [loading, setLoading] = useState(true);
   const [creating, setCreating] = useState(false);
+  const [createType, setCreateType] = useState<'presentation' | 'survey'>('presentation');
   const [newTitle, setNewTitle] = useState('');
+  const [newDescription, setNewDescription] = useState('');
+  const [activeTab, setActiveTab] = useState<'all' | 'presentation' | 'survey'>('all');
   const [healthStatus, setHealthStatus] = useState<any>(null);
+
+  // Responses viewer modal state
+  const [responsesModalPres, setResponsesModalPres] = useState<Presentation | null>(null);
+  const [responsesData, setResponsesData] = useState<{
+    loading: boolean;
+    responses: any[];
+    participants: any[];
+  }>({ loading: false, responses: [], participants: [] });
+  const [responsesTab, setResponsesTab] = useState<'analytics' | 'grid'>('analytics');
 
   // Deletion modal state
   const [deleteModalPres, setDeleteModalPres] = useState<Presentation | null>(null);
@@ -84,46 +102,135 @@ export default function AdminDashboardPage() {
     checkHealthAndLoad();
   }, []);
 
+  const handleCopySurveyLink = (code: string, e?: React.MouseEvent) => {
+    if (e) e.stopPropagation();
+    const url = `${window.location.origin}/survey/${code}`;
+    navigator.clipboard.writeText(url);
+    setToastMessage(`Survey share link copied: ${url}`);
+    setTimeout(() => setToastMessage(null), 3500);
+  };
+
+  const handleOpenResponsesModal = async (pres: Presentation, e?: React.MouseEvent) => {
+    if (e) e.stopPropagation();
+    setResponsesModalPres(pres);
+    setResponsesTab('analytics');
+    setResponsesData({ loading: true, responses: [], participants: [] });
+
+    try {
+      const res = await fetch(`/api/sync?code=${encodeURIComponent(pres.code)}`);
+      if (res.ok) {
+        const data = await res.json();
+        setResponsesData({
+          loading: false,
+          responses: data.responses || [],
+          participants: data.participants || [],
+        });
+      } else {
+        setResponsesData({ loading: false, responses: [], participants: [] });
+      }
+    } catch {
+      setResponsesData({ loading: false, responses: [], participants: [] });
+    }
+  };
+
   const handleCreateNew = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!newTitle.trim()) return;
 
+    const isSurvey = createType === 'survey';
     // Generate unique 6-digit room code
     const code = Math.floor(100000 + Math.random() * 900000).toString();
-    const id = `pres_${Date.now()}`;
+    const id = isSurvey ? `survey_${Date.now()}` : `pres_${Date.now()}`;
 
     const newPres: Presentation = {
       id,
       title: newTitle.trim(),
       code,
+      type: isSurvey ? 'survey' : 'presentation',
+      description: isSurvey
+        ? newDescription.trim() || 'Please take a moment to provide your valuable feedback.'
+        : '',
+      surveySettings: isSurvey
+        ? {
+            collectParticipantInfo: true,
+            requireName: false,
+            requireEmail: false,
+            requireWhatsapp: false,
+            isAnonymous: true,
+            thankYouMessage: 'Thank you for your valuable feedback!',
+            allowMultipleSubmissions: true,
+            submitButtonText: 'Submit Feedback',
+          }
+        : undefined,
       currentQuestionIndex: 0,
       isLive: true,
       isLocked: false,
+      lockForwardSlides: false,
       showResults: true,
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
       participantCount: 0,
       responseCount: 0,
-      questions: [
-        {
-          id: `q_${Date.now()}_1`,
-          type: 'mcq',
-          title: 'What is your primary goal for today?',
-          showResultsToAudience: true,
-          isLocked: false,
-          options: [
-            { id: 'opt_1', text: 'Learn something new' },
-            { id: 'opt_2', text: 'Network with peers' },
-            { id: 'opt_3', text: 'Explore practical tools' },
+      questions: isSurvey
+        ? [
+            {
+              id: `q_${Date.now()}_1`,
+              type: 'rating_scale',
+              title: 'How would you rate your overall experience?',
+              description: 'Rate from 1 (Poor) to 5 (Outstanding)',
+              required: true,
+              minRating: 1,
+              maxRating: 5,
+              showResultsToAudience: true,
+              isLocked: false,
+            },
+            {
+              id: `q_${Date.now()}_2`,
+              type: 'mcq',
+              title: 'How relevant was this content or service to you?',
+              description: 'Select one option',
+              required: true,
+              options: [
+                { id: 'opt_1', text: 'Extremely relevant & actionable' },
+                { id: 'opt_2', text: 'Somewhat relevant' },
+                { id: 'opt_3', text: 'Not relevant' },
+              ],
+              showResultsToAudience: true,
+              isLocked: false,
+            },
+            {
+              id: `q_${Date.now()}_3`,
+              type: 'long_answer',
+              title: 'What suggestions or comments do you have for improvement?',
+              description: 'Open-ended feedback',
+              required: false,
+              showResultsToAudience: true,
+              isLocked: false,
+            },
+          ]
+        : [
+            {
+              id: `q_${Date.now()}_1`,
+              type: 'mcq',
+              title: 'What is your primary goal for today?',
+              showResultsToAudience: true,
+              isLocked: false,
+              options: [
+                { id: 'opt_1', text: 'Learn something new' },
+                { id: 'opt_2', text: 'Network with peers' },
+                { id: 'opt_3', text: 'Explore practical tools' },
+              ],
+            },
           ],
-        },
-      ],
     };
 
     await savePresentation(newPres);
     setPresentations([newPres, ...presentations]);
     setNewTitle('');
+    setNewDescription('');
     setCreating(false);
+    setToastMessage(`Created new ${isSurvey ? 'survey form' : 'presentation'} "${newPres.title}" (PIN: ${code})!`);
+    setTimeout(() => setToastMessage(null), 3500);
   };
 
   const handleOpenDeleteModal = async (pres: Presentation) => {
@@ -269,10 +376,37 @@ export default function AdminDashboardPage() {
             )}
           </div>
 
-          <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap' }}>
             <ThemeToggle />
-            <button onClick={() => setCreating(true)} className="btn-primary">
-              <Plus size={18} /> New Presentation
+            <button
+              onClick={() => {
+                setCreateType('survey');
+                setCreating(true);
+              }}
+              className="btn-primary"
+              style={{
+                background: 'linear-gradient(135deg, #8b5cf6, #6366f1)',
+                borderColor: 'transparent',
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: '6px',
+              }}
+            >
+              <FileText size={16} /> New Survey Form
+            </button>
+            <button
+              onClick={() => {
+                setCreateType('presentation');
+                setCreating(true);
+              }}
+              className="btn-secondary"
+              style={{
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: '6px',
+              }}
+            >
+              <Plus size={16} /> New Live Poll
             </button>
             <button
               onClick={lockAdminSession}
@@ -311,338 +445,530 @@ export default function AdminDashboardPage() {
           </div>
         )}
 
-        {/* New Presentation Modal / Inline Card */}
+        {/* Creation Card */}
         {creating && (
           <div
             className="glass-panel"
             style={{
               padding: '24px',
               marginBottom: '32px',
-              border: '1px solid var(--accent-primary)',
+              border: '1.5px solid var(--accent-primary)',
+              borderRadius: '16px',
             }}
           >
-            <h3 style={{ fontSize: '1.2rem', fontWeight: 700, marginBottom: '12px' }}>
-              Create New Presentation
-            </h3>
-            <form onSubmit={handleCreateNew} style={{ display: 'flex', gap: '12px', flexWrap: 'wrap' }}>
-              <input
-                type="text"
-                autoFocus
-                required
-                value={newTitle}
-                onChange={(e) => setNewTitle(e.target.value)}
-                placeholder="e.g. Q3 All-Hands Live Poll & Brainstorming"
-                style={{
-                  flex: 1,
-                  minWidth: '280px',
-                  padding: '12px 16px',
-                  background: 'rgba(255, 255, 255, 0.05)',
-                  border: '1px solid var(--border-subtle)',
-                  borderRadius: '10px',
-                  color: 'inherit',
-                  fontSize: '1rem',
-                }}
-              />
-              <button type="submit" className="btn-primary">
-                Create & Add Questions
-              </button>
-              <button
-                type="button"
-                onClick={() => setCreating(false)}
-                className="btn-secondary"
-              >
-                Cancel
-              </button>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                <span style={{ fontSize: '1.2rem' }}>{createType === 'survey' ? '📋' : '⚡'}</span>
+                <h3 style={{ fontSize: '1.2rem', fontWeight: 700 }}>
+                  {createType === 'survey' ? 'Create New Survey Form (Shareable Link)' : 'Create New Live Presentation & Poll'}
+                </h3>
+              </div>
+              <div style={{ display: 'flex', gap: '6px' }}>
+                <button
+                  type="button"
+                  onClick={() => setCreateType('survey')}
+                  style={{
+                    padding: '6px 12px',
+                    borderRadius: '8px',
+                    fontSize: '0.82rem',
+                    fontWeight: 600,
+                    cursor: 'pointer',
+                    background: createType === 'survey' ? 'rgba(168, 85, 247, 0.18)' : 'transparent',
+                    border: `1px solid ${createType === 'survey' ? '#a855f7' : 'var(--border-subtle)'}`,
+                    color: createType === 'survey' ? '#c084fc' : 'var(--text-secondary)',
+                  }}
+                >
+                  📋 Survey Form
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setCreateType('presentation')}
+                  style={{
+                    padding: '6px 12px',
+                    borderRadius: '8px',
+                    fontSize: '0.82rem',
+                    fontWeight: 600,
+                    cursor: 'pointer',
+                    background: createType === 'presentation' ? 'rgba(99, 102, 241, 0.18)' : 'transparent',
+                    border: `1px solid ${createType === 'presentation' ? '#6366f1' : 'var(--border-subtle)'}`,
+                    color: createType === 'presentation' ? '#818cf8' : 'var(--text-secondary)',
+                  }}
+                >
+                  ⚡ Live Poll
+                </button>
+              </div>
+            </div>
+
+            <form onSubmit={handleCreateNew} style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
+              <div>
+                <label style={{ display: 'block', fontSize: '0.85rem', fontWeight: 600, marginBottom: '6px' }}>
+                  {createType === 'survey' ? 'Survey Title *' : 'Presentation Title *'}
+                </label>
+                <input
+                  type="text"
+                  autoFocus
+                  required
+                  value={newTitle}
+                  onChange={(e) => setNewTitle(e.target.value)}
+                  placeholder={createType === 'survey' ? 'e.g. Post-Workshop Feedback & Experience Survey' : 'e.g. Q3 All-Hands Live Poll & Brainstorming'}
+                  style={{
+                    width: '100%',
+                    padding: '12px 16px',
+                    background: 'rgba(255, 255, 255, 0.05)',
+                    border: '1px solid var(--border-subtle)',
+                    borderRadius: '10px',
+                    color: 'inherit',
+                    fontSize: '1rem',
+                  }}
+                />
+              </div>
+
+              {createType === 'survey' && (
+                <div>
+                  <label style={{ display: 'block', fontSize: '0.85rem', fontWeight: 600, marginBottom: '6px' }}>
+                    Survey Description / Instructions (Optional)
+                  </label>
+                  <input
+                    type="text"
+                    value={newDescription}
+                    onChange={(e) => setNewDescription(e.target.value)}
+                    placeholder="e.g. Thank you for attending! Please take 2 minutes to share your thoughts."
+                    style={{
+                      width: '100%',
+                      padding: '10px 14px',
+                      background: 'rgba(255, 255, 255, 0.05)',
+                      border: '1px solid var(--border-subtle)',
+                      borderRadius: '10px',
+                      color: 'inherit',
+                      fontSize: '0.9rem',
+                    }}
+                  />
+                </div>
+              )}
+
+              <div style={{ display: 'flex', gap: '10px', justifyContent: 'flex-start', marginTop: '6px' }}>
+                <button type="submit" className="btn-primary">
+                  {createType === 'survey' ? 'Create Survey & Configure' : 'Create & Add Slides'}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setCreating(false)}
+                  className="btn-secondary"
+                >
+                  Cancel
+                </button>
+              </div>
             </form>
           </div>
         )}
 
+        {/* Filter Tabs */}
+        <div style={{ display: 'flex', gap: '8px', marginBottom: '24px', flexWrap: 'wrap' }}>
+          <button
+            type="button"
+            onClick={() => setActiveTab('all')}
+            style={{
+              padding: '8px 16px',
+              borderRadius: '9999px',
+              fontSize: '0.86rem',
+              fontWeight: 700,
+              cursor: 'pointer',
+              background: activeTab === 'all' ? 'var(--accent-primary)' : 'rgba(255, 255, 255, 0.05)',
+              border: `1px solid ${activeTab === 'all' ? 'var(--accent-primary)' : 'var(--border-subtle)'}`,
+              color: activeTab === 'all' ? '#ffffff' : 'var(--text-secondary)',
+              transition: 'all 0.15s ease',
+            }}
+          >
+            All Items ({presentations.length})
+          </button>
+
+          <button
+            type="button"
+            onClick={() => setActiveTab('presentation')}
+            style={{
+              padding: '8px 16px',
+              borderRadius: '9999px',
+              fontSize: '0.86rem',
+              fontWeight: 700,
+              cursor: 'pointer',
+              display: 'inline-flex',
+              alignItems: 'center',
+              gap: '6px',
+              background: activeTab === 'presentation' ? '#6366f1' : 'rgba(255, 255, 255, 0.05)',
+              border: `1px solid ${activeTab === 'presentation' ? '#6366f1' : 'var(--border-subtle)'}`,
+              color: activeTab === 'presentation' ? '#ffffff' : 'var(--text-secondary)',
+              transition: 'all 0.15s ease',
+            }}
+          >
+            <span>⚡ Live Polls</span>
+            <span>({presentations.filter((p) => p.type !== 'survey').length})</span>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => setActiveTab('survey')}
+            style={{
+              padding: '8px 16px',
+              borderRadius: '9999px',
+              fontSize: '0.86rem',
+              fontWeight: 700,
+              cursor: 'pointer',
+              display: 'inline-flex',
+              alignItems: 'center',
+              gap: '6px',
+              background: activeTab === 'survey' ? '#8b5cf6' : 'rgba(255, 255, 255, 0.05)',
+              border: `1px solid ${activeTab === 'survey' ? '#8b5cf6' : 'var(--border-subtle)'}`,
+              color: activeTab === 'survey' ? '#ffffff' : 'var(--text-secondary)',
+              transition: 'all 0.15s ease',
+            }}
+          >
+            <span>📋 Survey Forms</span>
+            <span>({presentations.filter((p) => p.type === 'survey').length})</span>
+          </button>
+        </div>
+
         {/* Presentations List */}
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(320px, 1fr))', gap: '20px' }}>
-          {presentations.map((pres) => {
-            const hasDataBadge = (pres.participantCount ?? 0) > 0 || (pres.responseCount ?? 0) > 0;
-            return (
-              <div
-                key={pres.id}
-                className="glass-panel"
-                style={{
-                  padding: '24px',
-                  display: 'flex',
-                  flexDirection: 'column',
-                  justifyContent: 'space-between',
-                  transition: 'transform 0.2s ease, border-color 0.2s ease',
-                  position: 'relative',
-                }}
-              >
-                <div>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
-                    <span className="code-pill">PIN: {pres.code}</span>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                      <span style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>
-                        {pres.questions.length} {pres.questions.length === 1 ? 'slide' : 'slides'}
-                      </span>
-                      {/* Delete Presentation Icon Button */}
-                      <button
-                        type="button"
-                        onClick={() => handleOpenDeleteModal(pres)}
-                        title={`Delete presentation "${pres.title}"`}
-                        aria-label={`Delete presentation "${pres.title}"`}
-                        style={{
-                          display: 'inline-flex',
-                          alignItems: 'center',
-                          justifyContent: 'center',
-                          width: '30px',
-                          height: '30px',
-                          borderRadius: '8px',
-                          border: '1px solid rgba(239, 68, 68, 0.25)',
-                          background: 'rgba(239, 68, 68, 0.08)',
-                          color: '#ef4444',
-                          cursor: 'pointer',
-                          transition: 'all 0.15s ease',
-                          padding: 0,
-                        }}
-                        onMouseEnter={(e) => {
-                          e.currentTarget.style.background = '#ef4444';
-                          e.currentTarget.style.color = '#ffffff';
-                          e.currentTarget.style.borderColor = '#ef4444';
-                          e.currentTarget.style.transform = 'scale(1.08)';
-                        }}
-                        onMouseLeave={(e) => {
-                          e.currentTarget.style.background = 'rgba(239, 68, 68, 0.08)';
-                          e.currentTarget.style.color = '#ef4444';
-                          e.currentTarget.style.borderColor = 'rgba(239, 68, 68, 0.25)';
-                          e.currentTarget.style.transform = 'scale(1)';
-                        }}
-                      >
-                        <Trash2 size={15} />
-                      </button>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(340px, 1fr))', gap: '20px' }}>
+          {presentations
+            .filter((p) => {
+              if (activeTab === 'presentation') return p.type !== 'survey';
+              if (activeTab === 'survey') return p.type === 'survey';
+              return true;
+            })
+            .map((pres) => {
+              const isSurvey = pres.type === 'survey';
+              const hasDataBadge = (pres.participantCount ?? 0) > 0 || (pres.responseCount ?? 0) > 0;
+              return (
+                <div
+                  key={pres.id}
+                  className="glass-panel"
+                  style={{
+                    padding: '24px',
+                    display: 'flex',
+                    flexDirection: 'column',
+                    justifyContent: 'space-between',
+                    transition: 'transform 0.2s ease, border-color 0.2s ease',
+                    position: 'relative',
+                    borderRadius: '16px',
+                    border: isSurvey
+                      ? '1px solid rgba(168, 85, 247, 0.25)'
+                      : '1px solid var(--border-subtle)',
+                  }}
+                >
+                  <div>
+                    {/* Top Row: Type Badge, PIN & Actions */}
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                        <span
+                          style={{
+                            fontSize: '0.74rem',
+                            fontWeight: 700,
+                            padding: '3px 8px',
+                            borderRadius: '6px',
+                            background: isSurvey ? 'rgba(168, 85, 247, 0.15)' : 'rgba(99, 102, 241, 0.15)',
+                            border: `1px solid ${isSurvey ? 'rgba(168, 85, 247, 0.35)' : 'rgba(99, 102, 241, 0.35)'}`,
+                            color: isSurvey ? '#c084fc' : '#818cf8',
+                            display: 'inline-flex',
+                            alignItems: 'center',
+                            gap: '4px',
+                          }}
+                        >
+                          {isSurvey ? '📋 Survey Form' : '⚡ Live Poll'}
+                        </span>
+                        <span className="code-pill">Code: {pres.code}</span>
+                      </div>
+
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                        <span style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>
+                          {pres.questions.length} {pres.questions.length === 1 ? 'question' : 'questions'}
+                        </span>
+                        {/* Delete Button */}
+                        <button
+                          type="button"
+                          onClick={() => handleOpenDeleteModal(pres)}
+                          title={`Delete "${pres.title}"`}
+                          aria-label={`Delete "${pres.title}"`}
+                          style={{
+                            display: 'inline-flex',
+                            alignItems: 'center',
+                            justifyContent: 'center',
+                            width: '30px',
+                            height: '30px',
+                            borderRadius: '8px',
+                            border: '1px solid rgba(239, 68, 68, 0.25)',
+                            background: 'rgba(239, 68, 68, 0.08)',
+                            color: '#ef4444',
+                            cursor: 'pointer',
+                            transition: 'all 0.15s ease',
+                            padding: 0,
+                          }}
+                          onMouseEnter={(e) => {
+                            e.currentTarget.style.background = '#ef4444';
+                            e.currentTarget.style.color = '#ffffff';
+                            e.currentTarget.style.borderColor = '#ef4444';
+                            e.currentTarget.style.transform = 'scale(1.08)';
+                          }}
+                          onMouseLeave={(e) => {
+                            e.currentTarget.style.background = 'rgba(239, 68, 68, 0.08)';
+                            e.currentTarget.style.color = '#ef4444';
+                            e.currentTarget.style.borderColor = 'rgba(239, 68, 68, 0.25)';
+                            e.currentTarget.style.transform = 'scale(1)';
+                          }}
+                        >
+                          <Trash2 size={15} />
+                        </button>
+                      </div>
                     </div>
-                  </div>
 
-                  <h2 style={{ fontSize: '1.25rem', fontWeight: 700, marginBottom: '8px', lineHeight: 1.3 }}>
-                    {pres.title}
-                  </h2>
+                    <h2 style={{ fontSize: '1.22rem', fontWeight: 700, marginBottom: '6px', lineHeight: 1.3 }}>
+                      {pres.title}
+                    </h2>
 
-                  {/* Status Badges: Live/Closed, Self-Paced, Response Counts */}
-                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px', marginBottom: '14px', alignItems: 'center' }}>
-                    {/* Live vs Closed Badge */}
-                    <span
-                      style={{
-                        display: 'inline-flex',
-                        alignItems: 'center',
-                        gap: '5px',
-                        fontSize: '0.74rem',
-                        fontWeight: 700,
-                        color: pres.isLive !== false ? '#10b981' : '#f87171',
-                        background: pres.isLive !== false ? 'rgba(16, 185, 129, 0.12)' : 'rgba(239, 68, 68, 0.12)',
-                        border: `1px solid ${pres.isLive !== false ? 'rgba(16, 185, 129, 0.25)' : 'rgba(239, 68, 68, 0.25)'}`,
-                        padding: '3px 8px',
-                        borderRadius: '6px',
-                      }}
-                    >
-                      {pres.isLive !== false ? <Radio size={12} /> : <RadioOff size={12} />}
-                      <span>{pres.isLive !== false ? 'Session Open' : 'Session Closed'}</span>
-                    </span>
-
-                    {/* Navigation Mode Badge */}
-                    <span
-                      style={{
-                        display: 'inline-flex',
-                        alignItems: 'center',
-                        gap: '5px',
-                        fontSize: '0.74rem',
-                        fontWeight: 600,
-                        color: pres.lockForwardSlides ? '#f59e0b' : '#818cf8',
-                        background: pres.lockForwardSlides ? 'rgba(245, 158, 11, 0.12)' : 'rgba(99, 102, 241, 0.12)',
-                        border: `1px solid ${pres.lockForwardSlides ? 'rgba(245, 158, 11, 0.25)' : 'rgba(99, 102, 241, 0.25)'}`,
-                        padding: '3px 8px',
-                        borderRadius: '6px',
-                      }}
-                    >
-                      {pres.lockForwardSlides ? <Lock size={11} /> : <Compass size={11} />}
-                      <span>{pres.lockForwardSlides ? 'Paced by Host' : 'Self-Paced (Free)'}</span>
-                    </span>
-
-                    {hasDataBadge && (
-                      <span
+                    {pres.description && (
+                      <p
                         style={{
-                          display: 'inline-flex',
-                          alignItems: 'center',
-                          gap: '6px',
-                          fontSize: '0.74rem',
-                          fontWeight: 600,
+                          fontSize: '0.84rem',
                           color: 'var(--text-secondary)',
-                          background: 'rgba(255, 255, 255, 0.05)',
-                          border: '1px solid var(--border-subtle)',
-                          padding: '3px 8px',
-                          borderRadius: '6px',
+                          marginBottom: '12px',
+                          display: '-webkit-box',
+                          WebkitLineClamp: 2,
+                          WebkitBoxOrient: 'vertical',
+                          overflow: 'hidden',
+                          lineHeight: 1.4,
                         }}
                       >
-                        <Users size={11} />
-                        <span>{pres.participantCount || 0}</span>
-                        <span>•</span>
-                        <BarChart2 size={11} />
-                        <span>{pres.responseCount || 0} votes</span>
-                      </span>
+                        {pres.description}
+                      </p>
                     )}
-                  </div>
 
-                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px', marginBottom: '20px' }}>
-                    {pres.questions.slice(0, 3).map((q) => (
+                    {/* Status Badges: Live/Closed, Self-Paced, Response Counts */}
+                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px', marginBottom: '14px', alignItems: 'center' }}>
+                      {/* Live vs Closed Badge */}
                       <span
-                        key={q.id}
-                        style={{
-                          fontSize: '0.7rem',
-                          textTransform: 'uppercase',
-                          padding: '2px 8px',
-                          borderRadius: '4px',
-                          background: 'rgba(255, 255, 255, 0.06)',
-                          color: 'var(--text-secondary)',
-                          letterSpacing: '0.5px',
-                        }}
-                      >
-                        {q.type.replace('_', ' ')}
-                      </span>
-                    ))}
-                    {pres.questions.length > 3 && (
-                      <span style={{ fontSize: '0.7rem', color: 'var(--text-muted)', padding: '2px 4px' }}>
-                        +{pres.questions.length - 3} more
-                      </span>
-                    )}
-                  </div>
-                </div>
-
-                {/* Actions */}
-                <div style={{ display: 'flex', flexDirection: 'column', gap: '10px', paddingTop: '16px', borderTop: '1px solid var(--border-subtle)' }}>
-                  {/* Quick Controls: Toggle Live Session / Navigation Mode */}
-                  <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
-                    <button
-                      type="button"
-                      onClick={() => handleToggleSession(pres)}
-                      title={pres.isLive !== false ? 'Close this session to prevent further responses' : 'Reopen session to accept responses'}
-                      style={{
-                        flex: 1,
-                        display: 'inline-flex',
-                        alignItems: 'center',
-                        justifyContent: 'center',
-                        gap: '5px',
-                        fontSize: '0.78rem',
-                        fontWeight: 600,
-                        padding: '6px 10px',
-                        borderRadius: '6px',
-                        background: pres.isLive !== false ? 'rgba(239, 68, 68, 0.08)' : 'rgba(16, 185, 129, 0.1)',
-                        border: `1px solid ${pres.isLive !== false ? 'rgba(239, 68, 68, 0.25)' : 'rgba(16, 185, 129, 0.3)'}`,
-                        color: pres.isLive !== false ? '#ef4444' : '#10b981',
-                        cursor: 'pointer',
-                        transition: 'all 0.15s ease',
-                      }}
-                    >
-                      {pres.isLive !== false ? <RadioOff size={13} /> : <Radio size={13} />}
-                      <span>{pres.isLive !== false ? 'Close Session' : 'Reopen Session'}</span>
-                    </button>
-
-                    <button
-                      type="button"
-                      onClick={() => handleToggleForwardLock(pres)}
-                      title={pres.lockForwardSlides ? 'Allow participants to navigate to any slide freely' : 'Lock forward slides so participants only see what host is presenting'}
-                      style={{
-                        flex: 1,
-                        display: 'inline-flex',
-                        alignItems: 'center',
-                        justifyContent: 'center',
-                        gap: '5px',
-                        fontSize: '0.78rem',
-                        fontWeight: 600,
-                        padding: '6px 10px',
-                        borderRadius: '6px',
-                        background: pres.lockForwardSlides ? 'rgba(99, 102, 241, 0.1)' : 'rgba(245, 158, 11, 0.08)',
-                        border: `1px solid ${pres.lockForwardSlides ? 'rgba(99, 102, 241, 0.25)' : 'rgba(245, 158, 11, 0.25)'}`,
-                        color: pres.lockForwardSlides ? '#818cf8' : '#f59e0b',
-                        cursor: 'pointer',
-                        transition: 'all 0.15s ease',
-                      }}
-                    >
-                      {pres.lockForwardSlides ? <Compass size={13} /> : <Lock size={13} />}
-                      <span>{pres.lockForwardSlides ? 'Allow Free Nav' : 'Lock Forward'}</span>
-                    </button>
-                  </div>
-
-                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px' }}>
-                    <a
-                      href={`/present/${pres.code}`}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="btn-primary"
-                      style={{ padding: '10px 14px', fontSize: '0.85rem' }}
-                    >
-                      <Play size={14} fill="#ffffff" /> Present Live
-                    </a>
-
-                    <a
-                      href={`/admin/${pres.id}?code=${pres.code}`}
-                      className="btn-secondary"
-                      style={{ padding: '10px 14px', fontSize: '0.85rem' }}
-                    >
-                      <Edit3 size={14} /> Edit Slides
-                    </a>
-                  </div>
-
-                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '8px' }}>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                      <a
-                        href={`/api/export-xlsx/${pres.code}`}
-                        download
-                        title="Download all participants and their responses in Excel (.xlsx) format"
+                        onClick={() => handleToggleSession(pres)}
+                        title="Click to toggle session open/closed"
                         style={{
                           display: 'inline-flex',
                           alignItems: 'center',
                           gap: '5px',
-                          fontSize: '0.8rem',
-                          fontWeight: 600,
-                          color: '#10b981',
-                          padding: '4px 8px',
+                          fontSize: '0.74rem',
+                          fontWeight: 700,
+                          cursor: 'pointer',
+                          color: pres.isLive !== false ? '#10b981' : '#f87171',
+                          background: pres.isLive !== false ? 'rgba(16, 185, 129, 0.12)' : 'rgba(239, 68, 68, 0.12)',
+                          border: `1px solid ${pres.isLive !== false ? 'rgba(16, 185, 129, 0.25)' : 'rgba(239, 68, 68, 0.25)'}`,
+                          padding: '3px 8px',
                           borderRadius: '6px',
-                          background: 'rgba(16, 185, 129, 0.1)',
-                          border: '1px solid rgba(16, 185, 129, 0.25)',
                         }}
                       >
-                        <FileSpreadsheet size={14} /> Download Excel (.xlsx)
-                      </a>
+                        {pres.isLive !== false ? <Radio size={12} /> : <RadioOff size={12} />}
+                        <span>{pres.isLive !== false ? 'Open for Responses' : 'Closed'}</span>
+                      </span>
 
-                      <a
-                        href={`/api/export/${pres.code}`}
-                        download
-                        style={{
-                          display: 'inline-flex',
-                          alignItems: 'center',
-                          gap: '4px',
-                          fontSize: '0.78rem',
-                          color: 'var(--text-secondary)',
-                        }}
-                      >
-                        <Download size={13} /> CSV
-                      </a>
+                      {!isSurvey && (
+                        <span
+                          style={{
+                            display: 'inline-flex',
+                            alignItems: 'center',
+                            gap: '5px',
+                            fontSize: '0.74rem',
+                            fontWeight: 600,
+                            color: pres.lockForwardSlides ? '#f59e0b' : '#818cf8',
+                            background: pres.lockForwardSlides ? 'rgba(245, 158, 11, 0.12)' : 'rgba(99, 102, 241, 0.12)',
+                            border: `1px solid ${pres.lockForwardSlides ? 'rgba(245, 158, 11, 0.25)' : 'rgba(99, 102, 241, 0.25)'}`,
+                            padding: '3px 8px',
+                            borderRadius: '6px',
+                          }}
+                        >
+                          {pres.lockForwardSlides ? <Lock size={11} /> : <Compass size={11} />}
+                          <span>{pres.lockForwardSlides ? 'Paced by Host' : 'Self-Paced'}</span>
+                        </span>
+                      )}
+
+                      {hasDataBadge && (
+                        <span
+                          style={{
+                            display: 'inline-flex',
+                            alignItems: 'center',
+                            gap: '6px',
+                            fontSize: '0.74rem',
+                            fontWeight: 600,
+                            color: 'var(--text-secondary)',
+                            background: 'rgba(255, 255, 255, 0.05)',
+                            border: '1px solid var(--border-subtle)',
+                            padding: '3px 8px',
+                            borderRadius: '6px',
+                          }}
+                        >
+                          <Users size={11} />
+                          <span>{pres.participantCount || 0} respondents</span>
+                          <span>•</span>
+                          <BarChart2 size={11} />
+                          <span>{pres.responseCount || 0} answers</span>
+                        </span>
+                      )}
                     </div>
 
-                    <a
-                      href={`/join/${pres.code}`}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      style={{
-                        display: 'inline-flex',
-                        alignItems: 'center',
-                        gap: '4px',
-                        fontSize: '0.8rem',
-                        color: '#818cf8',
-                      }}
-                    >
-                      <ExternalLink size={14} /> Test Join Link
-                    </a>
+                    {/* Question type chips */}
+                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px', marginBottom: '20px' }}>
+                      {pres.questions.slice(0, 3).map((q) => (
+                        <span
+                          key={q.id}
+                          style={{
+                            fontSize: '0.7rem',
+                            textTransform: 'uppercase',
+                            padding: '2px 8px',
+                            borderRadius: '4px',
+                            background: 'rgba(255, 255, 255, 0.06)',
+                            color: 'var(--text-secondary)',
+                            letterSpacing: '0.5px',
+                          }}
+                        >
+                          {q.type.replace('_', ' ')}
+                        </span>
+                      ))}
+                      {pres.questions.length > 3 && (
+                        <span style={{ fontSize: '0.7rem', color: 'var(--text-muted)', padding: '2px 4px' }}>
+                          +{pres.questions.length - 3} more
+                        </span>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* Actions */}
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '10px', paddingTop: '16px', borderTop: '1px solid var(--border-subtle)' }}>
+                    {/* Primary Row */}
+                    {isSurvey ? (
+                      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px' }}>
+                        <button
+                          type="button"
+                          onClick={(e) => handleCopySurveyLink(pres.code, e)}
+                          className="btn-primary"
+                          style={{
+                            padding: '10px 12px',
+                            fontSize: '0.84rem',
+                            background: 'linear-gradient(135deg, #8b5cf6, #6366f1)',
+                            borderColor: 'transparent',
+                          }}
+                          title="Copy shareable Google Forms style link"
+                        >
+                          <Share2 size={14} /> Copy Share Link
+                        </button>
+
+                        <a
+                          href={`/survey/${pres.code}`}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="btn-secondary"
+                          style={{ padding: '10px 12px', fontSize: '0.84rem' }}
+                          title="Open survey form in new tab"
+                        >
+                          <Eye size={14} /> Open Form
+                        </a>
+                      </div>
+                    ) : (
+                      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px' }}>
+                        <a
+                          href={`/present/${pres.code}`}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="btn-primary"
+                          style={{ padding: '10px 14px', fontSize: '0.85rem' }}
+                        >
+                          <Play size={14} fill="#ffffff" /> Present Live
+                        </a>
+
+                        <a
+                          href={`/admin/${pres.id}?code=${pres.code}`}
+                          className="btn-secondary"
+                          style={{ padding: '10px 14px', fontSize: '0.85rem' }}
+                        >
+                          <Edit3 size={14} /> Edit Slides
+                        </a>
+                      </div>
+                    )}
+
+                    {/* Secondary Row: View Responses & Edit/Test Link */}
+                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px' }}>
+                      <button
+                        type="button"
+                        onClick={(e) => handleOpenResponsesModal(pres, e)}
+                        className="btn-secondary"
+                        style={{ padding: '8px 12px', fontSize: '0.82rem', color: '#818cf8' }}
+                        title="View live responses, analytics, and answers table"
+                      >
+                        <BarChart3 size={14} /> View Responses
+                      </button>
+
+                      {isSurvey ? (
+                        <a
+                          href={`/admin/${pres.id}?code=${pres.code}`}
+                          className="btn-secondary"
+                          style={{ padding: '8px 12px', fontSize: '0.82rem' }}
+                        >
+                          <Edit3 size={14} /> Edit Questions
+                        </a>
+                      ) : (
+                        <a
+                          href={`/join/${pres.code}`}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="btn-secondary"
+                          style={{ padding: '8px 12px', fontSize: '0.82rem' }}
+                        >
+                          <ExternalLink size={14} /> Test Join
+                        </a>
+                      )}
+                    </div>
+
+                    {/* Bottom Export Row */}
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '8px', paddingTop: '4px' }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                        <a
+                          href={`/api/export-xlsx/${pres.code}`}
+                          download
+                          title="Download all responses and participant details in Excel (.xlsx) format"
+                          style={{
+                            display: 'inline-flex',
+                            alignItems: 'center',
+                            gap: '5px',
+                            fontSize: '0.8rem',
+                            fontWeight: 600,
+                            color: '#10b981',
+                            padding: '4px 8px',
+                            borderRadius: '6px',
+                            background: 'rgba(16, 185, 129, 0.1)',
+                            border: '1px solid rgba(16, 185, 129, 0.25)',
+                          }}
+                        >
+                          <FileSpreadsheet size={14} /> Download Excel (.xlsx)
+                        </a>
+
+                        <a
+                          href={`/api/export/${pres.code}`}
+                          download
+                          style={{
+                            display: 'inline-flex',
+                            alignItems: 'center',
+                            gap: '4px',
+                            fontSize: '0.78rem',
+                            color: 'var(--text-secondary)',
+                          }}
+                        >
+                          <Download size={13} /> CSV
+                        </a>
+                      </div>
+
+                      {isSurvey && (
+                        <span style={{ fontSize: '0.76rem', color: 'var(--text-muted)' }}>
+                          Shareable Link Form
+                        </span>
+                      )}
+                    </div>
                   </div>
                 </div>
-              </div>
-            );
-          })}
+              );
+            })}
         </div>
 
         {/* Delete Confirmation Modal */}
@@ -913,6 +1239,556 @@ export default function AdminDashboardPage() {
                     </>
                   )}
                 </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Responses & Analytics Modal */}
+        {responsesModalPres && (
+          <div
+            style={{
+              position: 'fixed',
+              top: 0,
+              left: 0,
+              right: 0,
+              bottom: 0,
+              background: 'rgba(0, 0, 0, 0.75)',
+              backdropFilter: 'blur(8px)',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              zIndex: 1200,
+              padding: '24px',
+            }}
+            onClick={(e) => {
+              if (e.target === e.currentTarget) {
+                setResponsesModalPres(null);
+              }
+            }}
+          >
+            <div
+              className="glass-panel"
+              style={{
+                width: '100%',
+                maxWidth: '920px',
+                height: '88vh',
+                display: 'flex',
+                flexDirection: 'column',
+                borderRadius: '20px',
+                padding: 0,
+                overflow: 'hidden',
+                boxShadow: '0 25px 60px -12px rgba(0, 0, 0, 0.7)',
+                border: '1px solid var(--border-strong)',
+              }}
+            >
+              {/* Modal Top Header */}
+              <div
+                style={{
+                  padding: '22px 28px',
+                  borderBottom: '1px solid var(--border-subtle)',
+                  display: 'flex',
+                  justifyContent: 'space-between',
+                  alignItems: 'center',
+                  background: 'var(--bg-secondary)',
+                  flexWrap: 'wrap',
+                  gap: '12px',
+                }}
+              >
+                <div>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '4px' }}>
+                    <span
+                      style={{
+                        fontSize: '0.74rem',
+                        fontWeight: 700,
+                        padding: '2px 8px',
+                        borderRadius: '6px',
+                        background: responsesModalPres.type === 'survey' ? 'rgba(168, 85, 247, 0.15)' : 'rgba(99, 102, 241, 0.15)',
+                        border: `1px solid ${responsesModalPres.type === 'survey' ? 'rgba(168, 85, 247, 0.35)' : 'rgba(99, 102, 241, 0.35)'}`,
+                        color: responsesModalPres.type === 'survey' ? '#c084fc' : '#818cf8',
+                      }}
+                    >
+                      {responsesModalPres.type === 'survey' ? '📋 Survey Form' : '⚡ Live Poll'}
+                    </span>
+                    <span className="code-pill">Code: {responsesModalPres.code}</span>
+                  </div>
+                  <h2 style={{ fontSize: '1.35rem', fontWeight: 800, margin: 0, lineHeight: 1.3 }}>
+                    {responsesModalPres.title}
+                  </h2>
+                </div>
+
+                <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                  <a
+                    href={`/api/export-xlsx/${responsesModalPres.code}`}
+                    download
+                    className="btn-primary"
+                    style={{
+                      padding: '8px 14px',
+                      fontSize: '0.84rem',
+                      background: '#10b981',
+                      borderColor: '#10b981',
+                      display: 'inline-flex',
+                      alignItems: 'center',
+                      gap: '6px',
+                    }}
+                    title="Export complete responses to Excel (.xlsx)"
+                  >
+                    <FileSpreadsheet size={15} /> Export to Excel (.xlsx)
+                  </a>
+
+                  <button
+                    type="button"
+                    onClick={() => setResponsesModalPres(null)}
+                    className="btn-secondary"
+                    style={{ padding: '6px 10px', borderRadius: '8px' }}
+                  >
+                    <X size={18} />
+                  </button>
+                </div>
+              </div>
+
+              {/* Subheader: Stats Cards & View Tabs */}
+              <div
+                style={{
+                  padding: '16px 28px',
+                  background: 'rgba(255, 255, 255, 0.02)',
+                  borderBottom: '1px solid var(--border-subtle)',
+                  display: 'flex',
+                  justifyContent: 'space-between',
+                  alignItems: 'center',
+                  flexWrap: 'wrap',
+                  gap: '16px',
+                }}
+              >
+                {/* Stat pills */}
+                <div style={{ display: 'flex', gap: '12px', flexWrap: 'wrap' }}>
+                  <div
+                    style={{
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: '8px',
+                      padding: '6px 14px',
+                      borderRadius: '8px',
+                      background: 'rgba(255, 255, 255, 0.05)',
+                      border: '1px solid var(--border-subtle)',
+                      fontSize: '0.85rem',
+                    }}
+                  >
+                    <Users size={15} color="#818cf8" />
+                    <span>
+                      <strong>
+                        {
+                          new Set(responsesData.responses.map((r: any) => r.participantId)).size ||
+                          responsesData.participants.length ||
+                          responsesModalPres.participantCount ||
+                          0
+                        }
+                      </strong>{' '}
+                      Respondents
+                    </span>
+                  </div>
+
+                  <div
+                    style={{
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: '8px',
+                      padding: '6px 14px',
+                      borderRadius: '8px',
+                      background: 'rgba(255, 255, 255, 0.05)',
+                      border: '1px solid var(--border-subtle)',
+                      fontSize: '0.85rem',
+                    }}
+                  >
+                    <BarChart2 size={15} color="#10b981" />
+                    <span>
+                      <strong>{responsesData.responses.length}</strong> Total Answers
+                    </span>
+                  </div>
+
+                  <div
+                    style={{
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: '8px',
+                      padding: '6px 14px',
+                      borderRadius: '8px',
+                      background: 'rgba(255, 255, 255, 0.05)',
+                      border: '1px solid var(--border-subtle)',
+                      fontSize: '0.85rem',
+                    }}
+                  >
+                    <Layers size={15} color="#c084fc" />
+                    <span>
+                      <strong>{responsesModalPres.questions.length}</strong> Questions
+                    </span>
+                  </div>
+                </div>
+
+                {/* View Switcher */}
+                <div style={{ display: 'flex', gap: '4px', background: 'rgba(0, 0, 0, 0.25)', padding: '3px', borderRadius: '8px' }}>
+                  <button
+                    type="button"
+                    onClick={() => setResponsesTab('analytics')}
+                    style={{
+                      padding: '6px 12px',
+                      borderRadius: '6px',
+                      fontSize: '0.82rem',
+                      fontWeight: 600,
+                      cursor: 'pointer',
+                      border: 'none',
+                      background: responsesTab === 'analytics' ? 'var(--accent-primary)' : 'transparent',
+                      color: responsesTab === 'analytics' ? '#ffffff' : 'var(--text-secondary)',
+                      transition: 'all 0.15s ease',
+                    }}
+                  >
+                    📊 Question Breakdown
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => setResponsesTab('grid')}
+                    style={{
+                      padding: '6px 12px',
+                      borderRadius: '6px',
+                      fontSize: '0.82rem',
+                      fontWeight: 600,
+                      cursor: 'pointer',
+                      border: 'none',
+                      background: responsesTab === 'grid' ? 'var(--accent-primary)' : 'transparent',
+                      color: responsesTab === 'grid' ? '#ffffff' : 'var(--text-secondary)',
+                      transition: 'all 0.15s ease',
+                    }}
+                  >
+                    📋 Submissions Grid
+                  </button>
+                </div>
+              </div>
+
+              {/* Modal Body: Scrollable Content */}
+              <div style={{ flex: 1, overflowY: 'auto', padding: '24px 28px' }}>
+                {responsesData.loading ? (
+                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '240px', gap: '10px' }}>
+                    <Loader2 size={24} className="animate-spin" color="var(--accent-primary)" />
+                    <span style={{ color: 'var(--text-secondary)' }}>Loading responses from database...</span>
+                  </div>
+                ) : responsesData.responses.length === 0 ? (
+                  <div style={{ textAlign: 'center', padding: '60px 20px', color: 'var(--text-muted)' }}>
+                    <BarChart2 size={42} style={{ margin: '0 auto 12px', opacity: 0.5 }} />
+                    <h3 style={{ fontSize: '1.1rem', fontWeight: 700, color: 'var(--text-primary)', marginBottom: '6px' }}>
+                      No Responses Recorded Yet
+                    </h3>
+                    <p style={{ fontSize: '0.88rem', maxWidth: '420px', margin: '0 auto 18px', lineHeight: 1.5 }}>
+                      {responsesModalPres.type === 'survey'
+                        ? 'Share the survey link with respondents to begin collecting feedback.'
+                        : 'Launch the live presenter view and invite participants to vote.'}
+                    </p>
+                    {responsesModalPres.type === 'survey' && (
+                      <button
+                        type="button"
+                        onClick={(e) => handleCopySurveyLink(responsesModalPres.code, e)}
+                        className="btn-primary"
+                        style={{ display: 'inline-flex', padding: '8px 16px', fontSize: '0.85rem' }}
+                      >
+                        <Share2 size={15} /> Copy Survey Share Link
+                      </button>
+                    )}
+                  </div>
+                ) : responsesTab === 'analytics' ? (
+                  /* Question Breakdown / Charts Tab */
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '24px' }}>
+                    {responsesModalPres.questions.map((q, idx) => {
+                      const qResponses = responsesData.responses.filter((r: any) => r.questionId === q.id);
+                      const totalQ = qResponses.length;
+
+                      return (
+                        <div
+                          key={q.id}
+                          className="glass-panel"
+                          style={{
+                            padding: '20px 24px',
+                            borderRadius: '14px',
+                            border: '1px solid var(--border-subtle)',
+                          }}
+                        >
+                          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '14px', flexWrap: 'wrap', gap: '8px' }}>
+                            <div>
+                              <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '4px' }}>
+                                <span style={{ fontSize: '0.74rem', fontWeight: 700, color: 'var(--accent-primary)', textTransform: 'uppercase' }}>
+                                  Question {idx + 1}
+                                </span>
+                                <span style={{ fontSize: '0.7rem', padding: '2px 6px', borderRadius: '4px', background: 'rgba(255, 255, 255, 0.06)', color: 'var(--text-secondary)' }}>
+                                  {q.type.replace('_', ' ').toUpperCase()}
+                                </span>
+                                {q.required && <span style={{ color: '#ef4444', fontWeight: 700 }}>*</span>}
+                              </div>
+                              <h4 style={{ fontSize: '1.05rem', fontWeight: 700, margin: 0, lineHeight: 1.35 }}>
+                                {q.title}
+                              </h4>
+                            </div>
+
+                            <span style={{ fontSize: '0.82rem', fontWeight: 600, color: 'var(--text-secondary)' }}>
+                              {totalQ} {totalQ === 1 ? 'response' : 'responses'}
+                            </span>
+                          </div>
+
+                          {/* Charts / Visual Breakdown */}
+
+                          {/* 1. MCQ & Multiple Choice */}
+                          {(q.type === 'mcq' || q.type === 'multiple_choice') && q.options && (
+                            <div style={{ display: 'flex', flexDirection: 'column', gap: '10px', marginTop: '12px' }}>
+                              {q.options.map((opt) => {
+                                let count = 0;
+                                qResponses.forEach((r: any) => {
+                                  if (q.type === 'mcq') {
+                                    if (r.value === opt.id) count++;
+                                  } else {
+                                    try {
+                                      const ids = JSON.parse(r.value);
+                                      if (Array.isArray(ids) && ids.includes(opt.id)) count++;
+                                    } catch {
+                                      if (r.value === opt.id) count++;
+                                    }
+                                  }
+                                });
+                                const pct = totalQ > 0 ? Math.round((count / totalQ) * 100) : 0;
+
+                                return (
+                                  <div key={opt.id} style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                                    <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.85rem' }}>
+                                      <span style={{ fontWeight: 500, color: 'var(--text-primary)' }}>{opt.text}</span>
+                                      <span style={{ color: 'var(--text-secondary)', fontWeight: 600 }}>
+                                        {count} ({pct}%)
+                                      </span>
+                                    </div>
+                                    <div
+                                      style={{
+                                        width: '100%',
+                                        height: '8px',
+                                        borderRadius: '9999px',
+                                        background: 'rgba(255, 255, 255, 0.08)',
+                                        overflow: 'hidden',
+                                      }}
+                                    >
+                                      <div
+                                        style={{
+                                          width: `${pct}%`,
+                                          height: '100%',
+                                          borderRadius: '9999px',
+                                          background: 'linear-gradient(90deg, #6366f1, #a855f7)',
+                                          transition: 'width 0.4s ease',
+                                        }}
+                                      />
+                                    </div>
+                                  </div>
+                                );
+                              })}
+                            </div>
+                          )}
+
+                          {/* 2. Rating Scale */}
+                          {q.type === 'rating_scale' && (
+                            <div style={{ marginTop: '12px' }}>
+                              {(() => {
+                                const min = q.minRating || 1;
+                                const max = q.maxRating || 5;
+                                const counts: Record<number, number> = {};
+                                for (let i = min; i <= max; i++) counts[i] = 0;
+                                let sum = 0;
+                                qResponses.forEach((r: any) => {
+                                  const val = parseInt(r.value, 10);
+                                  if (!isNaN(val) && val >= min && val <= max) {
+                                    counts[val] = (counts[val] || 0) + 1;
+                                    sum += val;
+                                  }
+                                });
+                                const avg = totalQ > 0 ? (sum / totalQ).toFixed(1) : '0';
+
+                                return (
+                                  <div>
+                                    <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '14px' }}>
+                                      <span style={{ fontSize: '1.6rem', fontWeight: 800, color: '#f59e0b' }}>
+                                        ★ {avg}
+                                      </span>
+                                      <span style={{ fontSize: '0.85rem', color: 'var(--text-secondary)' }}>
+                                        Average Rating out of {max}
+                                      </span>
+                                    </div>
+
+                                    <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+                                      {Object.entries(counts).map(([score, c]) => (
+                                        <div
+                                          key={score}
+                                          style={{
+                                            flex: 1,
+                                            minWidth: '50px',
+                                            padding: '8px',
+                                            borderRadius: '8px',
+                                            background: 'rgba(255, 255, 255, 0.04)',
+                                            border: '1px solid var(--border-subtle)',
+                                            textAlign: 'center',
+                                          }}
+                                        >
+                                          <div style={{ fontSize: '0.8rem', fontWeight: 700, color: 'var(--text-muted)' }}>
+                                            {score}★
+                                          </div>
+                                          <div style={{ fontSize: '1.1rem', fontWeight: 800, color: 'var(--text-primary)' }}>
+                                            {c}
+                                          </div>
+                                        </div>
+                                      ))}
+                                    </div>
+                                  </div>
+                                );
+                              })()}
+                            </div>
+                          )}
+
+                          {/* 3. True / False */}
+                          {q.type === 'true_false' && (
+                            <div style={{ display: 'flex', gap: '16px', marginTop: '12px' }}>
+                              {(() => {
+                                const trueCount = qResponses.filter((r: any) => r.value === 'true').length;
+                                const falseCount = qResponses.filter((r: any) => r.value === 'false').length;
+                                const truePct = totalQ > 0 ? Math.round((trueCount / totalQ) * 100) : 0;
+                                const falsePct = totalQ > 0 ? Math.round((falseCount / totalQ) * 100) : 0;
+
+                                return (
+                                  <div style={{ width: '100%' }}>
+                                    <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '6px', fontSize: '0.85rem' }}>
+                                      <span style={{ color: '#10b981', fontWeight: 700 }}>👍 True: {trueCount} ({truePct}%)</span>
+                                      <span style={{ color: '#ef4444', fontWeight: 700 }}>👎 False: {falseCount} ({falsePct}%)</span>
+                                    </div>
+                                    <div style={{ width: '100%', height: '10px', borderRadius: '9999px', display: 'flex', overflow: 'hidden' }}>
+                                      <div style={{ width: `${truePct}%`, background: '#10b981', transition: 'width 0.3s' }} />
+                                      <div style={{ width: `${falsePct}%`, background: '#ef4444', transition: 'width 0.3s' }} />
+                                    </div>
+                                  </div>
+                                );
+                              })()}
+                            </div>
+                          )}
+
+                          {/* 4. Short / Long Answer Feedback */}
+                          {(q.type === 'short_answer' || q.type === 'long_answer') && (
+                            <div style={{ marginTop: '12px', display: 'flex', flexDirection: 'column', gap: '8px', maxHeight: '220px', overflowY: 'auto' }}>
+                              {qResponses.map((r: any) => (
+                                <div
+                                  key={r.id}
+                                  style={{
+                                    padding: '10px 14px',
+                                    borderRadius: '8px',
+                                    background: 'rgba(255, 255, 255, 0.04)',
+                                    border: '1px solid var(--border-subtle)',
+                                    fontSize: '0.88rem',
+                                  }}
+                                >
+                                  <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.74rem', color: 'var(--text-muted)', marginBottom: '4px' }}>
+                                    <span>{r.participantName || 'Anonymous'}</span>
+                                    <span>{new Date(r.createdAt).toLocaleTimeString()}</span>
+                                  </div>
+                                  <div style={{ color: 'var(--text-primary)', lineHeight: 1.45 }}>
+                                    {r.value}
+                                  </div>
+                                </div>
+                              ))}
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+                ) : (
+                  /* Submissions Grid (Google Sheets View) */
+                  <div style={{ overflowX: 'auto' }}>
+                    {(() => {
+                      // Group responses by participantId
+                      const userMap = new Map<string, any>();
+                      responsesData.responses.forEach((r: any) => {
+                        if (!userMap.has(r.participantId)) {
+                          userMap.set(r.participantId, {
+                            id: r.participantId,
+                            name: r.participantName || 'Anonymous',
+                            whatsapp: r.participantWhatsapp || 'N/A',
+                            email: r.participantEmail || 'N/A',
+                            submittedAt: r.createdAt,
+                            answers: {},
+                          });
+                        }
+                        userMap.get(r.participantId).answers[r.questionId] = r.value;
+                      });
+
+                      const rows = Array.from(userMap.values());
+
+                      return (
+                        <table
+                          style={{
+                            width: '100%',
+                            borderCollapse: 'collapse',
+                            fontSize: '0.84rem',
+                            textAlign: 'left',
+                          }}
+                        >
+                          <thead>
+                            <tr style={{ background: 'rgba(255, 255, 255, 0.06)', borderBottom: '1px solid var(--border-strong)' }}>
+                              <th style={{ padding: '10px 14px' }}>#</th>
+                              <th style={{ padding: '10px 14px' }}>Timestamp</th>
+                              <th style={{ padding: '10px 14px' }}>Respondent</th>
+                              <th style={{ padding: '10px 14px' }}>WhatsApp</th>
+                              <th style={{ padding: '10px 14px' }}>Email</th>
+                              {responsesModalPres.questions.map((q, idx) => (
+                                <th key={q.id} style={{ padding: '10px 14px', minWidth: '180px' }}>
+                                  Q{idx + 1}: {q.title}
+                                </th>
+                              ))}
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {rows.map((row, rIdx) => (
+                              <tr
+                                key={row.id}
+                                style={{
+                                  borderBottom: '1px solid var(--border-subtle)',
+                                  background: rIdx % 2 === 0 ? 'transparent' : 'rgba(255, 255, 255, 0.02)',
+                                }}
+                              >
+                                <td style={{ padding: '10px 14px', color: 'var(--text-muted)' }}>{rIdx + 1}</td>
+                                <td style={{ padding: '10px 14px', whiteSpace: 'nowrap', color: 'var(--text-secondary)' }}>
+                                  {new Date(row.submittedAt).toLocaleDateString()} {new Date(row.submittedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                                </td>
+                                <td style={{ padding: '10px 14px', fontWeight: 600 }}>{row.name}</td>
+                                <td style={{ padding: '10px 14px', color: 'var(--text-secondary)' }}>{row.whatsapp}</td>
+                                <td style={{ padding: '10px 14px', color: 'var(--text-secondary)' }}>{row.email}</td>
+                                {responsesModalPres.questions.map((q) => {
+                                  const raw = row.answers[q.id];
+                                  let display = raw || '-';
+                                  if (q.options && raw) {
+                                    if (q.type === 'mcq') {
+                                      const matched = q.options.find((o) => o.id === raw);
+                                      if (matched) display = matched.text;
+                                    } else if (q.type === 'multiple_choice') {
+                                      try {
+                                        const ids = JSON.parse(raw);
+                                        if (Array.isArray(ids)) {
+                                          display = ids.map((id) => q.options?.find((o) => o.id === id)?.text || id).join(', ');
+                                        }
+                                      } catch {}
+                                    }
+                                  }
+                                  return (
+                                    <td key={q.id} style={{ padding: '10px 14px', color: 'var(--text-primary)' }}>
+                                      {display}
+                                    </td>
+                                  );
+                                })}
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      );
+                    })()}
+                  </div>
+                )}
               </div>
             </div>
           </div>

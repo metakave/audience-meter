@@ -16,13 +16,27 @@ Designed to be hosted **100% free of cost on Vercel** paired with **Supabase Fre
 - **True / False**: High-contrast pulse check with duel comparison.
 - **Rating Scale (1–5)**: Live weighted average score calculation with star distribution.
 
-### 2. Frictionless Participant Onboarding
+### 2. Google Form-Style Shareable Surveys (`/survey/[code]`)
+- **Direct Share Link**: Send a link (e.g. `/survey/512340` or `/s/512340`) via WhatsApp, Email, or Slack to collect feedback asynchronously — no live presentation screen needed.
+- **Single-Page Form Flow**: All survey questions presented in a clean Google Forms layout.
+- **Configurable Respondent Info**: Require or make optional Full Name, WhatsApp, Email, or allow 100% anonymous responses.
+- **Question Validation**: Mark questions as required with asterisk (`*`) and automatic form validation.
+- **Atomic Batch Submission**: Submits all answers in a single request directly to the database.
+- **Custom Confirmation & Celebration**: Confetti animation and customizable thank you message.
+
+### 3. Frictionless Participant Onboarding (Live Mode)
 - **Direct Link / QR Code**: Participants join via URL (e.g. `/join/824915`) or by scanning a QR code on the presentation screen.
 - **Effortless Registration**: First Name, Last Name, WhatsApp Mobile Number, and Email.
 - **Local Storage Caching**: Participant details are remembered on the device so reloading or switching apps never asks for their data again.
 - **Low-Bandwidth Mobile First**: Lightweight HTML/CSS/SVG charts load in under 1 second even on 2G/3G mobile networks.
 
-### 3. Public Presentation View (`/present/[code]`)
+### 4. Excel (.xlsx) & CSV Export
+- **Google Sheets Format Grid**: Sheet 1 outputs 1 row per submission with each question as a dedicated column, matching the Google Forms spreadsheet export.
+- **Detailed Audit Log**: Sheet 2 contains row-by-row question answer history with timestamps.
+- **Respondents Directory**: Sheet 3 lists all respondents, contact details, and completion status.
+- **Questions & Stats**: Sheet 4 provides choice breakdowns, response counts, and rating averages.
+
+### 5. Public Presentation View (`/present/[code]`)
 - Projector/Large display view with big, high-contrast typography.
 - Real-time animated SVG bar charts, word clouds, and response counters.
 - QR code toggle modal with one-click URL copy.
@@ -32,19 +46,14 @@ Designed to be hosted **100% free of cost on Vercel** paired with **Supabase Fre
   - Show / Hide results toggle
   - Fullscreen toggle (Key `F`)
   - Confetti burst for celebrations (Key `C`)
-  - Direct CSV Export of attendee responses
+  - Direct Excel / CSV Export of attendee responses
 
-### 4. Admin Dashboard & Slide Builder (`/admin`)
-- Create new presentations with auto-generated 6-digit room PINs.
-- Add, edit, reorder, or delete slides.
-- Configure options, toggle results visibility, and manage slide locks.
-- One-click CSV export containing:
-  - Participant First & Last Name
-  - WhatsApp Mobile Number
-  - Email Address
-  - Question Title & Type
-  - Answer / Selection
-  - Submission Timestamp
+### 6. Admin Dashboard & Form Builder (`/admin`)
+- Create either **Live Audience Presentations** or **Google Form-Style Surveys**.
+- Filter tabs: "All", "⚡ Live Polls", "📋 Survey Forms".
+- Quick **"Copy Share Link"** for surveys and **"Open Form"** preview.
+- In-browser **Responses & Analytics Modal** with live option bar charts, average ratings, and Google Sheets submission table.
+- Edit form questions, set required toggles, add options, and configure thank you messages.
 
 ---
 
