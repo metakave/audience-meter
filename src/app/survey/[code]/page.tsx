@@ -26,6 +26,7 @@ import {
   FileText,
   Clock,
   ArrowRight,
+  ArrowLeft,
 } from 'lucide-react';
 import ThemeToggle from '@/components/ThemeToggle';
 import { DEFAULT_PRESENTATIONS } from '@/lib/default-data';
@@ -77,7 +78,20 @@ function SurveyFormContent({ params }: { params: Promise<{ code: string }> }) {
   const [isSubmitted, setIsSubmitted] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
 
+  // Pagination state: 15 questions per page
+  const QUESTIONS_PER_PAGE = 15;
+  const [currentPage, setCurrentPage] = useState(1);
+
   const questionRefs = useRef<Record<string, HTMLDivElement | null>>({});
+
+  const totalQuestions = survey?.questions?.length || 0;
+  const totalPages = Math.max(1, Math.ceil(totalQuestions / QUESTIONS_PER_PAGE));
+  const startIndex = (currentPage - 1) * QUESTIONS_PER_PAGE;
+  const endIndex = Math.min(startIndex + QUESTIONS_PER_PAGE, totalQuestions);
+  const currentQuestions = survey?.questions?.slice(startIndex, endIndex) || [];
+  const isFirstPage = currentPage === 1;
+  const isLastPage = currentPage === totalPages;
+  const progressPercent = totalPages > 1 ? Math.round((currentPage / totalPages) * 100) : 100;
 
   // 1. Restore saved respondent info & background revalidate survey
   useEffect(() => {
@@ -180,13 +194,13 @@ function SurveyFormContent({ params }: { params: Promise<{ code: string }> }) {
     }
   };
 
-  // Validate form before submission
-  const validateForm = (): boolean => {
+  // Validate fields and questions on a specific page
+  const validatePage = (pageNumber: number): boolean => {
     const errors: Record<string, string> = {};
     const settings = survey?.surveySettings;
 
-    // Contact field validations (if not anonymous)
-    if (!isAnonymous) {
+    // Contact field validations on Page 1 (if not anonymous)
+    if (pageNumber === 1 && !isAnonymous) {
       if (settings?.requireName && !fullName.trim()) {
         errors['fullName'] = 'Full Name is required';
       }
@@ -202,8 +216,12 @@ function SurveyFormContent({ params }: { params: Promise<{ code: string }> }) {
       }
     }
 
-    // Question validations
-    survey?.questions.forEach((q) => {
+    // Question validations for the target page slice
+    const pStart = (pageNumber - 1) * QUESTIONS_PER_PAGE;
+    const pEnd = Math.min(pStart + QUESTIONS_PER_PAGE, totalQuestions);
+    const pageQuestions = survey?.questions?.slice(pStart, pEnd) || [];
+
+    pageQuestions.forEach((q) => {
       if (q.required) {
         const ans = answers[q.id];
         if (ans === undefined || ans === null || ans === '') {
@@ -217,7 +235,6 @@ function SurveyFormContent({ params }: { params: Promise<{ code: string }> }) {
     setFieldErrors(errors);
 
     if (Object.keys(errors).length > 0) {
-      // Scroll to the first error
       const firstErrorKey = Object.keys(errors)[0];
       if (firstErrorKey === 'fullName' || firstErrorKey === 'whatsapp' || firstErrorKey === 'email') {
         window.scrollTo({ top: 120, behavior: 'smooth' });
@@ -230,6 +247,39 @@ function SurveyFormContent({ params }: { params: Promise<{ code: string }> }) {
       return false;
     }
 
+    return true;
+  };
+
+  const handleNextPage = () => {
+    if (!validatePage(currentPage)) return;
+    setCurrentPage((prev) => Math.min(prev + 1, totalPages));
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  };
+
+  const handlePrevPage = () => {
+    setFieldErrors({});
+    setCurrentPage((prev) => Math.max(prev - 1, 1));
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  };
+
+  const handleJumpToPage = (pageNum: number) => {
+    if (pageNum === currentPage) return;
+    if (pageNum > currentPage) {
+      if (!validatePage(currentPage)) return;
+    }
+    setFieldErrors({});
+    setCurrentPage(pageNum);
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  };
+
+  // Validate entire form across all pages before final submission
+  const validateForm = (): boolean => {
+    for (let p = 1; p <= totalPages; p++) {
+      if (!validatePage(p)) {
+        setCurrentPage(p);
+        return false;
+      }
+    }
     return true;
   };
 
@@ -328,6 +378,7 @@ function SurveyFormContent({ params }: { params: Promise<{ code: string }> }) {
   const handleResetForAnotherResponse = () => {
     setAnswers({});
     setFieldErrors({});
+    setCurrentPage(1);
     setIsSubmitted(false);
     setSubmitError(null);
     window.scrollTo({ top: 0, behavior: 'smooth' });
@@ -687,8 +738,110 @@ function SurveyFormContent({ params }: { params: Promise<{ code: string }> }) {
             </div>
           </div>
 
-          {/* Respondent Contact Info Card */}
-          {survey.surveySettings?.collectParticipantInfo !== false && (
+          {/* Pagination & Progress Indicator (if totalPages > 1) */}
+          {totalPages > 1 && (
+            <div
+              className="glass-panel"
+              style={{
+                borderRadius: '16px',
+                padding: '16px 24px',
+                marginBottom: '20px',
+                border: '1px solid var(--border-subtle)',
+              }}
+            >
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '10px', flexWrap: 'wrap', gap: '8px' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                  <span
+                    style={{
+                      fontSize: '0.82rem',
+                      fontWeight: 800,
+                      padding: '4px 12px',
+                      borderRadius: '9999px',
+                      background: 'var(--accent-primary)',
+                      color: '#ffffff',
+                    }}
+                  >
+                    Page {currentPage} of {totalPages}
+                  </span>
+                  <span style={{ fontSize: '0.88rem', fontWeight: 600, color: 'var(--text-secondary)' }}>
+                    Questions {startIndex + 1}–{endIndex} of {totalQuestions}
+                  </span>
+                </div>
+
+                <span style={{ fontSize: '0.82rem', fontWeight: 700, color: 'var(--accent-primary)' }}>
+                  {progressPercent}% Complete
+                </span>
+              </div>
+
+              {/* Progress Bar */}
+              <div
+                style={{
+                  width: '100%',
+                  height: '7px',
+                  borderRadius: '9999px',
+                  background: 'rgba(255, 255, 255, 0.08)',
+                  overflow: 'hidden',
+                  marginBottom: '14px',
+                }}
+              >
+                <div
+                  style={{
+                    width: `${progressPercent}%`,
+                    height: '100%',
+                    borderRadius: '9999px',
+                    background: 'linear-gradient(90deg, #6366f1, #a855f7)',
+                    transition: 'width 0.3s ease',
+                  }}
+                />
+              </div>
+
+              {/* Quick Jump Part Tabs */}
+              <div style={{ display: 'flex', gap: '8px', overflowX: 'auto', paddingBottom: '2px' }}>
+                {Array.from({ length: totalPages }).map((_, i) => {
+                  const pageNum = i + 1;
+                  const pStart = i * QUESTIONS_PER_PAGE + 1;
+                  const pEnd = Math.min((i + 1) * QUESTIONS_PER_PAGE, totalQuestions);
+                  const isActive = pageNum === currentPage;
+                  const isCompleted = pageNum < currentPage;
+
+                  return (
+                    <button
+                      key={pageNum}
+                      type="button"
+                      onClick={() => handleJumpToPage(pageNum)}
+                      style={{
+                        padding: '6px 14px',
+                        borderRadius: '8px',
+                        fontSize: '0.78rem',
+                        fontWeight: 700,
+                        cursor: 'pointer',
+                        border: isActive
+                          ? '1.5px solid var(--accent-primary)'
+                          : '1px solid var(--border-subtle)',
+                        background: isActive
+                          ? 'rgba(99, 102, 241, 0.2)'
+                          : isCompleted
+                          ? 'rgba(16, 185, 129, 0.1)'
+                          : 'rgba(255, 255, 255, 0.03)',
+                        color: isActive
+                          ? '#ffffff'
+                          : isCompleted
+                          ? '#10b981'
+                          : 'var(--text-secondary)',
+                        whiteSpace: 'nowrap',
+                        transition: 'all 0.15s ease',
+                      }}
+                    >
+                      {isCompleted && '✓ '}Part {pageNum} ({pStart}–{pEnd})
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+
+          {/* Respondent Contact Info Card (shown on Page 1) */}
+          {isFirstPage && survey.surveySettings?.collectParticipantInfo !== false && (
             <div
               className="glass-panel"
               style={{
@@ -859,9 +1012,10 @@ function SurveyFormContent({ params }: { params: Promise<{ code: string }> }) {
             </div>
           )}
 
-          {/* Questions List */}
+          {/* Questions List (Paginated: 15 questions per page) */}
           <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
-            {survey.questions.map((q, idx) => {
+            {currentQuestions.map((q, idx) => {
+              const absoluteIndex = startIndex + idx + 1;
               const hasError = Boolean(fieldErrors[q.id]);
               const currentAnswer = answers[q.id];
 
@@ -897,7 +1051,7 @@ function SurveyFormContent({ params }: { params: Promise<{ code: string }> }) {
                           color: 'var(--accent-primary)',
                         }}
                       >
-                        Question {idx + 1}
+                        Question {absoluteIndex}
                       </span>
                       {q.required && (
                         <span style={{ color: '#ef4444', fontWeight: 700, fontSize: '0.9rem' }} title="Required">
@@ -1177,8 +1331,8 @@ function SurveyFormContent({ params }: { params: Promise<{ code: string }> }) {
             })}
           </div>
 
-          {/* Form Submit Footer */}
-          <div style={{ marginTop: '28px', display: 'flex', flexDirection: 'column', gap: '12px' }}>
+          {/* Form Navigation & Submit Footer */}
+          <div style={{ marginTop: '28px', display: 'flex', flexDirection: 'column', gap: '14px' }}>
             {submitError && (
               <div
                 style={{
@@ -1198,47 +1352,108 @@ function SurveyFormContent({ params }: { params: Promise<{ code: string }> }) {
               </div>
             )}
 
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '12px' }}>
-              <button
-                type="submit"
-                disabled={isSubmitting}
-                className="btn-primary"
-                style={{
-                  padding: '14px 28px',
-                  fontSize: '1.05rem',
-                  fontWeight: 700,
-                  display: 'inline-flex',
-                  alignItems: 'center',
-                  gap: '10px',
-                  cursor: isSubmitting ? 'not-allowed' : 'pointer',
-                  opacity: isSubmitting ? 0.7 : 1,
-                  boxShadow: '0 4px 20px var(--accent-glow)',
-                }}
-              >
-                {isSubmitting ? (
-                  <>
-                    <div
-                      style={{
-                        width: '16px',
-                        height: '16px',
-                        border: '2px solid #ffffff',
-                        borderTopColor: 'transparent',
-                        borderRadius: '50%',
-                        animation: 'spin 0.8s linear infinite',
-                      }}
-                    />
-                    <span>Submitting Feedback...</span>
-                  </>
-                ) : (
-                  <>
-                    <Send size={18} />
-                    <span>{survey.surveySettings?.submitButtonText || 'Submit Survey Feedback'}</span>
-                  </>
-                )}
-              </button>
+            <div
+              style={{
+                display: 'flex',
+                justifyContent: 'space-between',
+                alignItems: 'center',
+                flexWrap: 'wrap',
+                gap: '12px',
+                paddingTop: '20px',
+                borderTop: '1px solid var(--border-subtle)',
+              }}
+            >
+              {!isFirstPage ? (
+                <button
+                  type="button"
+                  onClick={handlePrevPage}
+                  className="btn-secondary"
+                  style={{
+                    padding: '12px 22px',
+                    fontSize: '0.95rem',
+                    fontWeight: 600,
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    gap: '8px',
+                    cursor: 'pointer',
+                  }}
+                >
+                  <ArrowLeft size={16} /> Previous 15 Questions
+                </button>
+              ) : (
+                <div />
+              )}
 
+              <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                {!isLastPage ? (
+                  <button
+                    type="button"
+                    onClick={handleNextPage}
+                    className="btn-primary"
+                    style={{
+                      padding: '13px 26px',
+                      fontSize: '0.98rem',
+                      fontWeight: 700,
+                      display: 'inline-flex',
+                      alignItems: 'center',
+                      gap: '8px',
+                      cursor: 'pointer',
+                      boxShadow: '0 4px 16px var(--accent-glow)',
+                    }}
+                  >
+                    <span>Next 15 Questions ({endIndex + 1}–{Math.min(endIndex + QUESTIONS_PER_PAGE, totalQuestions)})</span>
+                    <ArrowRight size={17} />
+                  </button>
+                ) : (
+                  <button
+                    type="submit"
+                    disabled={isSubmitting}
+                    className="btn-primary"
+                    style={{
+                      padding: '14px 32px',
+                      fontSize: '1.05rem',
+                      fontWeight: 700,
+                      display: 'inline-flex',
+                      alignItems: 'center',
+                      gap: '10px',
+                      cursor: isSubmitting ? 'not-allowed' : 'pointer',
+                      opacity: isSubmitting ? 0.7 : 1,
+                      boxShadow: '0 4px 20px var(--accent-glow)',
+                    }}
+                  >
+                    {isSubmitting ? (
+                      <>
+                        <div
+                          style={{
+                            width: '16px',
+                            height: '16px',
+                            border: '2px solid #ffffff',
+                            borderTopColor: 'transparent',
+                            borderRadius: '50%',
+                            animation: 'spin 0.8s linear infinite',
+                          }}
+                        />
+                        <span>Submitting Feedback...</span>
+                      </>
+                    ) : (
+                      <>
+                        <Send size={18} />
+                        <span>{survey.surveySettings?.submitButtonText || 'Submit Survey Feedback'}</span>
+                      </>
+                    )}
+                  </button>
+                )}
+              </div>
+            </div>
+
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '8px', paddingTop: '6px' }}>
               <span style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>
-                Powered by AudienceMeter • Responses saved securely
+                {totalPages > 1
+                  ? `Showing questions ${startIndex + 1}–${endIndex} of ${totalQuestions} (Page ${currentPage} of ${totalPages})`
+                  : 'Never submit passwords or sensitive financial credentials through this form.'}
+              </span>
+              <span style={{ fontSize: '0.78rem', color: 'var(--text-muted)' }}>
+                Powered by AudienceMeter Forms
               </span>
             </div>
           </div>
