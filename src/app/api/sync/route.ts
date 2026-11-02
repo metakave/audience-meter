@@ -221,9 +221,11 @@ export async function GET(req: NextRequest) {
   // Fetch individual presentation & responses
   if (isSupabaseConfigured && supabase) {
     try {
-      const presPromise = presId
-        ? supabase.from('presentations').select('*').or(`id.eq.${presId},code.eq.${code}`).maybeSingle()
-        : supabase.from('presentations').select('*').eq('code', code).maybeSingle();
+      const presPromise = supabase
+        .from('presentations')
+        .select('*')
+        .eq('code', code)
+        .maybeSingle();
 
       let pData: any = null;
       let partData: any[] = [];
@@ -233,18 +235,22 @@ export async function GET(req: NextRequest) {
         const { data } = await presPromise;
         pData = data;
       } else if (presId) {
-        // High-speed parallel execution: fetch presentation, participants, and responses concurrently!
+        // High-speed parallel indexed execution:
+        // - presentations hits idx_presentations_code
+        // - participants hits idx_participants_room
+        // - responses hits idx_responses_presentation
+        const targetIds = presId === code ? [code] : [presId, code];
         const [pRes, partRes, respRes] = await Promise.all([
           presPromise,
           supabase
             .from('participants')
             .select('*')
-            .or(`presentation_id.eq.${presId},room_code.eq.${code}`)
+            .eq('room_code', code)
             .order('joined_at', { ascending: false }),
           supabase
             .from('responses')
             .select('*')
-            .or(`presentation_id.eq.${presId},presentation_id.eq.${code}`)
+            .in('presentation_id', targetIds)
             .order('created_at', { ascending: false }),
         ]);
         pData = pRes.data;
@@ -254,16 +260,17 @@ export async function GET(req: NextRequest) {
         const { data } = await presPromise;
         pData = data;
         if (pData) {
+          const targetIds = pData.id === code ? [code] : [pData.id, code];
           const [partRes, respRes] = await Promise.all([
             supabase
               .from('participants')
               .select('*')
-              .or(`presentation_id.eq.${pData.id},room_code.eq.${code}`)
+              .eq('room_code', code)
               .order('joined_at', { ascending: false }),
             supabase
               .from('responses')
               .select('*')
-              .or(`presentation_id.eq.${pData.id},presentation_id.eq.${code}`)
+              .in('presentation_id', targetIds)
               .order('created_at', { ascending: false }),
           ]);
           partData = partRes.data || [];
