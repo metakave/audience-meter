@@ -756,6 +756,7 @@ export async function POST(req: NextRequest) {
     }
 
     if (action === 'reset_responses') {
+      let debugError: any = null;
       if (isSupabaseConfigured && supabase) {
         try {
           const { data: pres } = await supabase
@@ -765,34 +766,24 @@ export async function POST(req: NextRequest) {
             .maybeSingle();
           const targetIds = pres?.id ? (pres.id === code ? [code] : [pres.id, code]) : [code];
 
-          await Promise.all([
-            supabase.from('responses').delete().in('presentation_id', targetIds),
-            supabase.from('responses').delete().eq('room_code', code),
-            supabase.from('participants').delete().in('presentation_id', targetIds),
-            supabase.from('participants').delete().eq('room_code', code),
-          ]);
+          const delResp = await supabase.from('responses').delete().in('presentation_id', targetIds);
+          const delPart = await supabase.from('participants').delete().in('presentation_id', targetIds);
+          const delPartCode = await supabase.from('participants').delete().eq('room_code', code);
 
-          // In case DELETE on participants table is restricted by older RLS policy,
-          // archive/unlink remaining participants so room 774201 is 100% clean
-          await Promise.all([
-            supabase
-              .from('participants')
-              .update({ room_code: `archived_${code}`, presentation_id: 'archived' })
-              .in('presentation_id', targetIds),
-            supabase
-              .from('participants')
-              .update({ room_code: `archived_${code}`, presentation_id: 'archived' })
-              .eq('room_code', code),
-          ]);
-        } catch (e) {
-          console.warn('Supabase reset responses failed:', e);
+          debugError = {
+            delRespError: delResp.error,
+            delPartError: delPart.error,
+            delPartCodeError: delPartCode.error,
+          };
+        } catch (e: any) {
+          debugError = e?.message || e;
         }
       }
 
       store.responses[code] = [];
       store.participants[code] = [];
       saveStoreData(store);
-      return NextResponse.json({ success: true });
+      return NextResponse.json({ success: true, debug: debugError });
     }
 
     if (action === 'delete_presentation') {
