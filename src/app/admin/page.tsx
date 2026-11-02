@@ -1024,28 +1024,26 @@ export default function AdminDashboardPage() {
                         </span>
                       )}
 
-                      {hasDataBadge && (
-                        <span
-                          style={{
-                            display: 'inline-flex',
-                            alignItems: 'center',
-                            gap: '6px',
-                            fontSize: '0.74rem',
-                            fontWeight: 600,
-                            color: 'var(--text-secondary)',
-                            background: 'rgba(255, 255, 255, 0.05)',
-                            border: '1px solid var(--border-subtle)',
-                            padding: '3px 8px',
-                            borderRadius: '6px',
-                          }}
-                        >
-                          <Users size={11} />
-                          <span>{pres.participantCount || 0} respondents</span>
-                          <span>•</span>
-                          <BarChart2 size={11} />
-                          <span>{pres.responseCount || 0} answers</span>
-                        </span>
-                      )}
+                      <span
+                        style={{
+                          display: 'inline-flex',
+                          alignItems: 'center',
+                          gap: '6px',
+                          fontSize: '0.74rem',
+                          fontWeight: 600,
+                          color: (pres.participantCount || 0) > 0 ? '#818cf8' : 'var(--text-secondary)',
+                          background: (pres.participantCount || 0) > 0 ? 'rgba(99, 102, 241, 0.12)' : 'rgba(255, 255, 255, 0.04)',
+                          border: `1px solid ${(pres.participantCount || 0) > 0 ? 'rgba(99, 102, 241, 0.3)' : 'var(--border-subtle)'}`,
+                          padding: '3px 8px',
+                          borderRadius: '6px',
+                        }}
+                      >
+                        <Users size={11} />
+                        <span>{pres.participantCount || 0} respondents</span>
+                        <span>•</span>
+                        <BarChart2 size={11} />
+                        <span>{pres.responseCount || 0} answers</span>
+                      </span>
                     </div>
 
                     {/* Question type chips */}
@@ -1143,13 +1141,38 @@ export default function AdminDashboardPage() {
                             style={{
                               padding: '8px 12px',
                               fontSize: '0.82rem',
+                              display: 'inline-flex',
+                              alignItems: 'center',
+                              justifyContent: 'center',
+                              gap: '8px',
                               color: submissionCount > 0 ? '#818cf8' : 'var(--text-secondary)',
+                              borderColor: submissionCount > 0 ? 'rgba(99, 102, 241, 0.4)' : 'var(--border-subtle)',
+                              background: submissionCount > 0 ? 'rgba(99, 102, 241, 0.1)' : 'rgba(255, 255, 255, 0.03)',
                               fontWeight: submissionCount > 0 ? 700 : 500,
+                              cursor: 'pointer',
                             }}
-                            title="View live responses, analytics, and answers table"
+                            title={`View ${submissionCount} recorded response(s)`}
                           >
                             <BarChart3 size={14} />
-                            <span>View Responses{submissionCount > 0 ? ` (${submissionCount})` : ''}</span>
+                            <span>View Responses</span>
+                            <span
+                              style={{
+                                display: 'inline-flex',
+                                alignItems: 'center',
+                                justifyContent: 'center',
+                                minWidth: '22px',
+                                height: '20px',
+                                padding: '0 6px',
+                                borderRadius: '9999px',
+                                fontSize: '0.74rem',
+                                fontWeight: 800,
+                                background: submissionCount > 0 ? '#6366f1' : 'rgba(255, 255, 255, 0.12)',
+                                color: submissionCount > 0 ? '#ffffff' : 'var(--text-secondary)',
+                                boxShadow: submissionCount > 0 ? '0 1px 6px rgba(99, 102, 241, 0.4)' : 'none',
+                              }}
+                            >
+                              {submissionCount}
+                            </span>
                           </button>
                         );
                       })()}
