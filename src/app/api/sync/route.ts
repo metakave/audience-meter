@@ -763,15 +763,21 @@ export async function POST(req: NextRequest) {
             .select('id')
             .eq('code', code)
             .maybeSingle();
-          if (pres?.id) {
-            await supabase.from('responses').delete().eq('presentation_id', pres.id);
-          }
+          const targetIds = pres?.id ? (pres.id === code ? [code] : [pres.id, code]) : [code];
+
+          await Promise.all([
+            supabase.from('responses').delete().in('presentation_id', targetIds),
+            supabase.from('responses').delete().eq('room_code', code),
+            supabase.from('participants').delete().in('presentation_id', targetIds),
+            supabase.from('participants').delete().eq('room_code', code),
+          ]);
         } catch (e) {
           console.warn('Supabase reset responses failed:', e);
         }
       }
 
       store.responses[code] = [];
+      store.participants[code] = [];
       saveStoreData(store);
       return NextResponse.json({ success: true });
     }
