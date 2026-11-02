@@ -78,6 +78,7 @@ function SurveyFormContent({ params }: { params: Promise<{ code: string }> }) {
   const [isSubmitted, setIsSubmitted] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
   const [showConfirmModal, setShowConfirmModal] = useState(false);
+  const [draftRestored, setDraftRestored] = useState(false);
 
   // Pagination state: 15 questions per page
   const QUESTIONS_PER_PAGE = 15;
@@ -116,6 +117,24 @@ function SurveyFormContent({ params }: { params: Promise<{ code: string }> }) {
       if (saved.email) setEmail(saved.email);
     }
 
+    // Auto-restore in-progress draft answers if participant reloads or reconnects
+    try {
+      const draftRaw = localStorage.getItem(`audiencemeter_draft_${code}`);
+      if (draftRaw) {
+        const draft = JSON.parse(draftRaw);
+        if (draft && typeof draft.answers === 'object' && Object.keys(draft.answers).length > 0) {
+          setAnswers(draft.answers);
+          if (draft.fullName) setFullName(draft.fullName);
+          if (draft.whatsapp) setWhatsapp(draft.whatsapp);
+          if (draft.email) setEmail(draft.email);
+          if (typeof draft.isAnonymous === 'boolean') setIsAnonymous(draft.isAnonymous);
+          if (draft.currentPage && draft.currentPage > 1) setCurrentPage(draft.currentPage);
+          setDraftRestored(true);
+          setTimeout(() => setDraftRestored(false), 5000);
+        }
+      }
+    } catch {}
+
     fetchPresentation(code).then((data) => {
       if (!isMounted) return;
       if (data) {
@@ -131,6 +150,26 @@ function SurveyFormContent({ params }: { params: Promise<{ code: string }> }) {
       isMounted = false;
     };
   }, [code]);
+
+  // Auto-save draft whenever answers or progress change (protects against browser refresh/crash)
+  useEffect(() => {
+    if (isSubmitted) return;
+    if (Object.keys(answers).length === 0 && !fullName && !whatsapp) return;
+    try {
+      localStorage.setItem(
+        `audiencemeter_draft_${code}`,
+        JSON.stringify({
+          answers,
+          fullName,
+          whatsapp,
+          email,
+          isAnonymous,
+          currentPage,
+          updatedAt: Date.now(),
+        })
+      );
+    } catch {}
+  }, [answers, fullName, whatsapp, email, isAnonymous, currentPage, code, isSubmitted]);
 
   // Handle single choice selection
   const handleSelectOption = (questionId: string, optionId: string) => {
@@ -306,7 +345,7 @@ function SurveyFormContent({ params }: { params: Promise<{ code: string }> }) {
 
   // Final confirmed survey execution
   const handleExecuteSubmit = async () => {
-    if (!survey) return;
+    if (!survey || isSubmitting) return;
 
     setShowConfirmModal(false);
     setIsSubmitting(true);
@@ -376,6 +415,11 @@ function SurveyFormContent({ params }: { params: Promise<{ code: string }> }) {
 
       if (success) {
         setIsSubmitted(true);
+        // Clear saved in-progress draft from localStorage on successful completion
+        try {
+          localStorage.removeItem(`audiencemeter_draft_${code}`);
+        } catch {}
+
         // Confetti celebration
         try {
           confetti({
@@ -396,6 +440,9 @@ function SurveyFormContent({ params }: { params: Promise<{ code: string }> }) {
   };
 
   const handleResetForAnotherResponse = () => {
+    try {
+      localStorage.removeItem(`audiencemeter_draft_${code}`);
+    } catch {}
     setAnswers({});
     setFieldErrors({});
     setCurrentPage(1);
@@ -845,6 +892,7 @@ function SurveyFormContent({ params }: { params: Promise<{ code: string }> }) {
               <button
                 type="button"
                 onClick={handleExecuteSubmit}
+                disabled={isSubmitting}
                 className="btn-primary"
                 style={{
                   padding: '11px 24px',
@@ -853,12 +901,13 @@ function SurveyFormContent({ params }: { params: Promise<{ code: string }> }) {
                   display: 'inline-flex',
                   alignItems: 'center',
                   gap: '8px',
-                  cursor: 'pointer',
+                  cursor: isSubmitting ? 'not-allowed' : 'pointer',
+                  opacity: isSubmitting ? 0.7 : 1,
                   boxShadow: '0 4px 16px var(--accent-glow)',
                 }}
               >
                 <Send size={16} />
-                <span>Confirm & Submit</span>
+                <span>{isSubmitting ? 'Submitting...' : 'Confirm & Submit'}</span>
               </button>
             </div>
           </div>
@@ -1088,6 +1137,26 @@ function SurveyFormContent({ params }: { params: Promise<{ code: string }> }) {
 
       {/* Main Container */}
       <main style={{ flex: 1, padding: '36px 16px 64px', maxWidth: '760px', margin: '0 auto', width: '100%' }}>
+        {draftRestored && (
+          <div
+            style={{
+              marginBottom: '16px',
+              padding: '10px 16px',
+              borderRadius: '10px',
+              background: 'rgba(99, 102, 241, 0.12)',
+              border: '1px solid rgba(99, 102, 241, 0.3)',
+              color: '#a5b4fc',
+              fontSize: '0.86rem',
+              display: 'flex',
+              alignItems: 'center',
+              gap: '8px',
+              fontWeight: 600,
+            }}
+          >
+            <span>✨</span>
+            <span>Your previous in-progress answers were automatically restored.</span>
+          </div>
+        )}
         <form onSubmit={handleRequestSubmit} noValidate>
           {/* Survey Header Card (Google Forms Banner Card) */}
           <div
