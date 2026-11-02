@@ -53,11 +53,18 @@ export async function GET(
         .single();
 
       if (presData) {
+        const isSurveyType =
+          presData.type === 'survey' ||
+          presData.id?.startsWith('survey_') ||
+          presData.id?.includes('survey') ||
+          presData.id?.includes('assessment') ||
+          Boolean(presData.survey_settings || presData.surveySettings);
+
         presentation = {
           id: presData.id,
           title: presData.title,
           code: presData.code,
-          type: presData.type || (presData.id?.startsWith('survey_') ? 'survey' : 'presentation'),
+          type: isSurveyType ? 'survey' : 'presentation',
           description: presData.description || '',
           surveySettings: presData.survey_settings || presData.surveySettings || undefined,
           currentQuestionIndex: presData.current_question_index,
@@ -170,15 +177,17 @@ export async function GET(
   // 1. PRIMARY SHEET: Google Forms Spreadsheet Format (1 row per submission, 1 column per question)
   const gridSheetData: Record<string, any>[] = [];
 
-  Array.from(respondentsMap.values()).forEach((resp, rowIdx) => {
+  Array.from(respondentsMap.values()).forEach((resp) => {
     const userResponses = responses.filter((r) => r.participantId === resp.id);
+    if (userResponses.length === 0) return; // Skip participants who have no recorded responses
+
     const latestTimestamp = userResponses.length > 0
       ? userResponses[userResponses.length - 1].createdAt
       : resp.submittedAt;
 
     const rowObj: Record<string, any> = {
-      'Submission #': rowIdx + 1,
-      'Timestamp': new Date(latestTimestamp).toLocaleString(),
+      'Submission #': gridSheetData.length + 1,
+      'Timestamp': new Date(latestTimestamp).toLocaleString('en-US'),
       'Respondent Name': resp.name,
       'WhatsApp / Phone': resp.whatsapp || 'N/A',
       'Email Address': resp.email || 'N/A',
@@ -194,27 +203,12 @@ export async function GET(
     gridSheetData.push(rowObj);
   });
 
-  // Fallback empty row if no submissions yet
-  if (gridSheetData.length === 0) {
-    const emptyRow: Record<string, any> = {
-      'Submission #': '',
-      'Timestamp': '',
-      'Respondent Name': 'No responses submitted yet',
-      'WhatsApp / Phone': '',
-      'Email Address': '',
-    };
-    presentation.questions.forEach((q, qIdx) => {
-      emptyRow[`Q${qIdx + 1}: ${q.title}`] = '';
-    });
-    gridSheetData.push(emptyRow);
-  }
-
   // 2. DETAILED SHEET: All Responses Row by Row
   const detailedSheetData = responses.map((r, idx) => {
     const q = questionMap.get(r.questionId);
     return {
       'Record #': idx + 1,
-      'Submitted At': new Date(r.createdAt).toLocaleString(),
+      'Submitted At': new Date(r.createdAt).toLocaleString('en-US'),
       'Respondent Name': r.participantName || 'Anonymous',
       'WhatsApp Number': r.participantWhatsapp || 'N/A',
       'Email Address': r.participantEmail || 'N/A',
@@ -225,18 +219,20 @@ export async function GET(
   });
 
   // 3. RESPONDENTS LIST SHEET
-  const respondentsSheetData = Array.from(respondentsMap.values()).map((resp, idx) => {
-    const answeredCount = responses.filter((r) => r.participantId === resp.id).length;
-    return {
-      '#': idx + 1,
-      'Respondent Name': resp.name,
-      'WhatsApp Mobile Number': resp.whatsapp || 'N/A',
-      'Email Address': resp.email || 'N/A',
-      'First Recorded At': new Date(resp.submittedAt).toLocaleString(),
-      'Total Questions Answered': answeredCount,
-      'Completion Status': answeredCount >= presentation.questions.length ? 'Completed' : 'Partial',
-    };
-  });
+  const respondentsSheetData = Array.from(respondentsMap.values())
+    .filter((resp) => responses.some((r) => r.participantId === resp.id))
+    .map((resp, idx) => {
+      const answeredCount = responses.filter((r) => r.participantId === resp.id).length;
+      return {
+        '#': idx + 1,
+        'Respondent Name': resp.name,
+        'WhatsApp Mobile Number': resp.whatsapp || 'N/A',
+        'Email Address': resp.email || 'N/A',
+        'First Recorded At': new Date(resp.submittedAt).toLocaleString('en-US'),
+        'Total Questions Answered': answeredCount,
+        'Completion Status': answeredCount >= presentation.questions.length ? 'Completed' : 'Partial',
+      };
+    });
 
   // 4. QUESTIONS OVERVIEW & STATS SHEET
   const questionsSheetData = presentation.questions.map((q, idx) => {
