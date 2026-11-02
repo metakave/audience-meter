@@ -165,28 +165,84 @@ export async function submitResponse(submission: ResponseSubmission, roomCode: s
 export async function submitSurvey(
   participant: Participant,
   submissions: ResponseSubmission[],
-  roomCode: string
+  roomCode: string,
+  presentation?: Presentation
 ): Promise<boolean> {
   const supabase = getSupabase();
   let supabaseSuccess = false;
 
   if (isSupabaseConfigured && supabase) {
     try {
-      await supabase.from('participants').upsert({
+      // 1. Look up presentation in Supabase to guarantee foreign key constraint is satisfied
+      let targetPresId = participant.presentationId;
+      const { data: dbPres } = await supabase
+        .from('presentations')
+        .select('id')
+        .eq('code', roomCode)
+        .maybeSingle();
+
+      if (dbPres?.id) {
+        targetPresId = dbPres.id;
+      } else if (presentation) {
+        // Presentation row not yet in Supabase, upsert it first
+        const dbPayload: any = {
+          id: presentation.id,
+          title: presentation.title,
+          code: presentation.code,
+          type: presentation.type || (presentation.id?.startsWith('survey_') ? 'survey' : 'presentation'),
+          description: presentation.description || '',
+          survey_settings: presentation.surveySettings || {},
+          current_question_index: presentation.currentQuestionIndex || 0,
+          is_live: typeof presentation.isLive === 'boolean' ? presentation.isLive : true,
+          is_locked: typeof presentation.isLocked === 'boolean' ? presentation.isLocked : false,
+          lock_forward_slides: presentation.lockForwardSlides ?? false,
+          show_results: typeof presentation.showResults === 'boolean' ? presentation.showResults : true,
+          questions: presentation.questions,
+          created_at: presentation.createdAt || new Date().toISOString(),
+          updated_at: new Date().toISOString(),
+        };
+        const { error: seedErr } = await supabase.from('presentations').upsert(dbPayload);
+        if (seedErr) {
+          if (
+            seedErr.message?.includes('type') ||
+            seedErr.message?.includes('description') ||
+            seedErr.message?.includes('survey_settings') ||
+            seedErr.message?.includes('lock_forward_slides')
+          ) {
+            delete dbPayload.type;
+            delete dbPayload.description;
+            delete dbPayload.survey_settings;
+            delete dbPayload.lock_forward_slides;
+            await supabase.from('presentations').upsert(dbPayload);
+          }
+        }
+        targetPresId = presentation.id;
+      }
+
+      participant.presentationId = targetPresId;
+      submissions.forEach((s) => (s.presentationId = targetPresId));
+
+      const partRow = {
         id: participant.id,
-        presentation_id: participant.presentationId,
+        presentation_id: targetPresId,
         room_code: participant.roomCode,
         first_name: participant.firstName,
         last_name: participant.lastName,
         whatsapp: participant.whatsapp,
         email: participant.email,
         joined_at: participant.joinedAt,
-      });
+      };
+
+      // Try insert first (standard for new submissions, works cleanly under RLS)
+      const { error: pErr } = await supabase.from('participants').insert(partRow);
+      if (pErr) {
+        await supabase.from('participants').upsert(partRow);
+      }
 
       if (submissions.length > 0) {
         const rows = submissions.map((s) => ({
           id: s.id,
-          presentation_id: s.presentationId,
+          presentation_id: targetPresId,
           question_id: s.questionId,
           participant_id: s.participantId,
           participant_name: s.participantName,
@@ -195,13 +251,18 @@ export async function submitSurvey(
           value: s.value,
           created_at: s.createdAt,
         }));
-        const { error } = await supabase.from('responses').upsert(rows, { onConflict: 'id' });
-        if (!error) supabaseSuccess = true;
+        const { error: rErr } = await supabase.from('responses').insert(rows);
+        if (rErr) {
+          const { error: upErr } = await supabase.from('responses').upsert(rows, { onConflict: 'id' });
+          if (!upErr) supabaseSuccess = true;
+        } else {
+          supabaseSuccess = true;
+        }
       } else {
         supabaseSuccess = true;
       }
     } catch (e) {
-      console.warn('Supabase survey batch submit failed:', e);
+      console.warn('Supabase survey batch submit failed on client:', e);
     }
   }
 
@@ -214,6 +275,7 @@ export async function submitSurvey(
         code: roomCode,
         participant,
         submissions,
+        presentation,
       }),
     });
     return res.ok || supabaseSuccess;
@@ -345,16 +407,22 @@ export async function deletePresentation(id: string, code: string): Promise<bool
   const supabase = getSupabase();
   if (isSupabaseConfigured && supabase) {
     try {
-      if (id) {
-        await supabase.from('presentations').delete().eq('id', id);
+      let targetId = id;
+      if (!targetId) {
+        const { data: pres } = await supabase
+          .from('presentations')
+          .select('id')
+          .eq('code', code)
+          .maybeSingle();
+        if (pres?.id) targetId = pres.id;
       }
-      await supabase.from('presentations').delete().eq('code', code);
-      if (id) {
-        await supabase.from('participants').delete().eq('presentation_id', id);
-        await supabase.from('responses').delete().eq('presentation_id', id);
+      if (targetId) {
+        await supabase.from('responses').delete().eq('presentation_id', targetId);
+        await supabase.from('participants').delete().eq('presentation_id', targetId);
+        await supabase.from('presentations').delete().eq('id', targetId);
       }
       await supabase.from('participants').delete().eq('room_code', code);
-      await supabase.from('responses').delete().eq('room_code', code);
+      await supabase.from('presentations').delete().eq('code', code);
     } catch (e) {
       console.warn('Supabase delete presentation failed:', e);
     }

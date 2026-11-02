@@ -50,6 +50,7 @@ CREATE INDEX IF NOT EXISTS idx_participants_room ON participants(room_code);
 CREATE TABLE IF NOT EXISTS responses (
   id TEXT PRIMARY KEY,
   presentation_id TEXT NOT NULL REFERENCES presentations(id) ON DELETE CASCADE,
+  room_code TEXT,
   question_id TEXT NOT NULL,
   participant_id TEXT NOT NULL,
   participant_name TEXT NOT NULL,
@@ -59,7 +60,11 @@ CREATE TABLE IF NOT EXISTS responses (
   created_at TIMESTAMPTZ DEFAULT timezone('utc'::text, now()) NOT NULL
 );
 
+-- For existing databases, run these optional migration columns:
+ALTER TABLE responses ADD COLUMN IF NOT EXISTS room_code TEXT;
+
 CREATE INDEX IF NOT EXISTS idx_responses_presentation ON responses(presentation_id);
+CREATE INDEX IF NOT EXISTS idx_responses_room ON responses(room_code);
 CREATE INDEX IF NOT EXISTS idx_responses_question ON responses(question_id);
 CREATE INDEX IF NOT EXISTS idx_responses_participant ON responses(participant_id);
 
@@ -69,18 +74,50 @@ ALTER TABLE participants ENABLE ROW LEVEL SECURITY;
 ALTER TABLE responses ENABLE ROW LEVEL SECURITY;
 
 -- Allow public read & write (via anon key)
-CREATE POLICY "Allow public read access to presentations" ON presentations FOR SELECT USING (true);
-CREATE POLICY "Allow public insert to presentations" ON presentations FOR INSERT WITH CHECK (true);
-CREATE POLICY "Allow public update to presentations" ON presentations FOR UPDATE USING (true);
-CREATE POLICY "Allow public delete to presentations" ON presentations FOR DELETE USING (true);
+DO $$
+BEGIN
+  -- Presentations Policies
+  IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE tablename = 'presentations' AND policyname = 'Allow public read access to presentations') THEN
+    CREATE POLICY "Allow public read access to presentations" ON presentations FOR SELECT USING (true);
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE tablename = 'presentations' AND policyname = 'Allow public insert to presentations') THEN
+    CREATE POLICY "Allow public insert to presentations" ON presentations FOR INSERT WITH CHECK (true);
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE tablename = 'presentations' AND policyname = 'Allow public update to presentations') THEN
+    CREATE POLICY "Allow public update to presentations" ON presentations FOR UPDATE USING (true);
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE tablename = 'presentations' AND policyname = 'Allow public delete to presentations') THEN
+    CREATE POLICY "Allow public delete to presentations" ON presentations FOR DELETE USING (true);
+  END IF;
 
-CREATE POLICY "Allow public read access to participants" ON participants FOR SELECT USING (true);
-CREATE POLICY "Allow public insert to participants" ON participants FOR INSERT WITH CHECK (true);
+  -- Participants Policies (SELECT, INSERT, UPDATE, DELETE)
+  IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE tablename = 'participants' AND policyname = 'Allow public read access to participants') THEN
+    CREATE POLICY "Allow public read access to participants" ON participants FOR SELECT USING (true);
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE tablename = 'participants' AND policyname = 'Allow public insert to participants') THEN
+    CREATE POLICY "Allow public insert to participants" ON participants FOR INSERT WITH CHECK (true);
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE tablename = 'participants' AND policyname = 'Allow public update to participants') THEN
+    CREATE POLICY "Allow public update to participants" ON participants FOR UPDATE USING (true);
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE tablename = 'participants' AND policyname = 'Allow public delete to participants') THEN
+    CREATE POLICY "Allow public delete to participants" ON participants FOR DELETE USING (true);
+  END IF;
 
-CREATE POLICY "Allow public read access to responses" ON responses FOR SELECT USING (true);
-CREATE POLICY "Allow public insert to responses" ON responses FOR INSERT WITH CHECK (true);
-CREATE POLICY "Allow public update to responses" ON responses FOR UPDATE USING (true);
-CREATE POLICY "Allow public delete to responses" ON responses FOR DELETE USING (true);
+  -- Responses Policies (SELECT, INSERT, UPDATE, DELETE)
+  IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE tablename = 'responses' AND policyname = 'Allow public read access to responses') THEN
+    CREATE POLICY "Allow public read access to responses" ON responses FOR SELECT USING (true);
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE tablename = 'responses' AND policyname = 'Allow public insert to responses') THEN
+    CREATE POLICY "Allow public insert to responses" ON responses FOR INSERT WITH CHECK (true);
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE tablename = 'responses' AND policyname = 'Allow public update to responses') THEN
+    CREATE POLICY "Allow public update to responses" ON responses FOR UPDATE USING (true);
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE tablename = 'responses' AND policyname = 'Allow public delete to responses') THEN
+    CREATE POLICY "Allow public delete to responses" ON responses FOR DELETE USING (true);
+  END IF;
+END $$;
 
 -- 6. Enable Supabase Realtime publication
 -- This enables live WebSocket pushes to presenter screen & participants without polling!

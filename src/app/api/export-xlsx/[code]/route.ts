@@ -111,11 +111,15 @@ export async function GET(
     }
   }
 
-  // Fallback to server store
+  // Fallback or merge with server store
+  const store = getStoreData();
   if (!presentation) {
-    const store = getStoreData();
     presentation = store.presentations[code] || null;
+  }
+  if (responses.length === 0 && (store.responses[code] || []).length > 0) {
     responses = store.responses[code] || [];
+  }
+  if (participants.length === 0 && (store.participants[code] || []).length > 0) {
     participants = store.participants[code] || [];
   }
 

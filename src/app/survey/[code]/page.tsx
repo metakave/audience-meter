@@ -265,8 +265,8 @@ function SurveyFormContent({ params }: { params: Promise<{ code: string }> }) {
         }
       });
 
-      // Submit all responses at once
-      const success = await submitSurvey(participant, submissions, survey.code);
+      // Submit all responses at once (passing survey presentation to ensure DB foreign-key consistency)
+      const success = await submitSurvey(participant, submissions, survey.code, survey);
 
       if (success) {
         setIsSubmitted(true);

@@ -4,6 +4,68 @@ import { getStoreData, saveStoreData } from '@/lib/server-store';
 import { getSupabase, isSupabaseConfigured } from '@/lib/supabase';
 import { DEFAULT_PRESENTATIONS } from '@/lib/default-data';
 
+async function ensurePresentationInSupabase(
+  supabase: any,
+  code: string,
+  preferredPresentation?: Presentation
+): Promise<string | null> {
+  try {
+    const { data: dbPres } = await supabase
+      .from('presentations')
+      .select('id, code')
+      .eq('code', code)
+      .maybeSingle();
+
+    if (dbPres?.id) {
+      return dbPres.id;
+    }
+
+    const store = getStoreData();
+    const pToSeed =
+      preferredPresentation ||
+      store.presentations[code] ||
+      DEFAULT_PRESENTATIONS.find((dp) => dp.code === code);
+
+    if (pToSeed) {
+      const dbPayload: any = {
+        id: pToSeed.id,
+        title: pToSeed.title,
+        code: pToSeed.code,
+        type: pToSeed.type || (pToSeed.id?.startsWith('survey_') ? 'survey' : 'presentation'),
+        description: pToSeed.description || '',
+        survey_settings: pToSeed.surveySettings || {},
+        current_question_index: pToSeed.currentQuestionIndex || 0,
+        is_live: typeof pToSeed.isLive === 'boolean' ? pToSeed.isLive : true,
+        is_locked: typeof pToSeed.isLocked === 'boolean' ? pToSeed.isLocked : false,
+        lock_forward_slides: pToSeed.lockForwardSlides ?? false,
+        show_results: typeof pToSeed.showResults === 'boolean' ? pToSeed.showResults : true,
+        questions: pToSeed.questions || [],
+        created_at: pToSeed.createdAt || new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+      };
+      const { error: seedErr } = await supabase.from('presentations').upsert(dbPayload);
+      if (seedErr) {
+        if (
+          seedErr.message?.includes('type') ||
+          seedErr.message?.includes('description') ||
+          seedErr.message?.includes('survey_settings') ||
+          seedErr.message?.includes('lock_forward_slides')
+        ) {
+          delete dbPayload.type;
+          delete dbPayload.description;
+          delete dbPayload.survey_settings;
+          delete dbPayload.lock_forward_slides;
+          await supabase.from('presentations').upsert(dbPayload);
+        }
+      }
+      return pToSeed.id;
+    }
+  } catch (err) {
+    console.warn('ensurePresentationInSupabase failed:', err);
+  }
+  return null;
+}
+
 export async function GET(req: NextRequest) {
   const { searchParams } = new URL(req.url);
   const code = searchParams.get('code');
@@ -45,7 +107,7 @@ export async function GET(req: NextRequest) {
             .select('presentation_id, room_code');
           const { data: responsesData } = await supabase
             .from('responses')
-            .select('presentation_id, room_code');
+            .select('presentation_id');
 
           const partCountMap: Record<string, number> = {};
           (participantsData || []).forEach((p: any) => {
@@ -56,7 +118,6 @@ export async function GET(req: NextRequest) {
           const respCountMap: Record<string, number> = {};
           (responsesData || []).forEach((r: any) => {
             if (r.presentation_id) respCountMap[r.presentation_id] = (respCountMap[r.presentation_id] || 0) + 1;
-            if (r.room_code) respCountMap[r.room_code] = (respCountMap[r.room_code] || 0) + 1;
           });
 
           const formatted: Presentation[] = presList.map((p: any) => ({
@@ -74,8 +135,8 @@ export async function GET(req: NextRequest) {
             questions: p.questions,
             createdAt: p.created_at,
             updatedAt: p.updated_at,
-            participantCount: partCountMap[p.id] ?? partCountMap[p.code] ?? 0,
-            responseCount: respCountMap[p.id] ?? respCountMap[p.code] ?? 0,
+            participantCount: Math.max(partCountMap[p.id] ?? partCountMap[p.code] ?? 0, (store.participants[p.code] || []).length),
+            responseCount: Math.max(respCountMap[p.id] ?? 0, (store.responses[p.code] || []).length),
           }));
 
           return NextResponse.json({ success: true, presentations: formatted });
@@ -108,15 +169,17 @@ export async function GET(req: NextRequest) {
         .single();
 
       if (pData) {
-        const { count: partCount } = await supabase
+        const { data: partData } = await supabase
           .from('participants')
-          .select('*', { count: 'exact', head: true })
-          .eq('presentation_id', pData.id);
+          .select('*')
+          .eq('presentation_id', pData.id)
+          .order('joined_at', { ascending: false });
 
         const { data: respData } = await supabase
           .from('responses')
           .select('*')
-          .eq('presentation_id', pData.id);
+          .eq('presentation_id', pData.id)
+          .order('created_at', { ascending: false });
 
         const presentation: Presentation = {
           id: pData.id,
@@ -147,11 +210,31 @@ export async function GET(req: NextRequest) {
           createdAt: r.created_at,
         }));
 
+        const participants: Participant[] = (partData || []).map((p: any) => ({
+          id: p.id,
+          presentationId: p.presentation_id,
+          roomCode: p.room_code,
+          firstName: p.first_name,
+          lastName: p.last_name,
+          whatsapp: p.whatsapp,
+          email: p.email,
+          joinedAt: p.joined_at,
+        }));
+
+        // Merge with local store if local store has additional/fallback responses or participants
+        const store = getStoreData();
+        const storeResponses = store.responses[code] || [];
+        const storeParticipants = store.participants[code] || [];
+
+        const finalResponses = responses.length > 0 ? responses : storeResponses;
+        const finalParticipants = participants.length > 0 ? participants : storeParticipants;
+
         return NextResponse.json({
           success: true,
           presentation,
-          participantCount: partCount || 0,
-          responses,
+          participantCount: Math.max(finalParticipants.length, storeParticipants.length),
+          participants: finalParticipants,
+          responses: finalResponses,
         });
       } else {
         const store = getStoreData();
@@ -208,6 +291,7 @@ export async function GET(req: NextRequest) {
     success: true,
     presentation,
     participantCount: participants.length,
+    participants,
     responses,
   });
 }
@@ -279,16 +363,23 @@ export async function POST(req: NextRequest) {
 
       if (isSupabaseConfigured && supabase) {
         try {
-          await supabase.from('participants').upsert({
+          const targetPresId =
+            (await ensurePresentationInSupabase(supabase, code, body.presentation)) ||
+            participant.presentationId;
+          const partRow = {
             id: participant.id,
-            presentation_id: participant.presentationId,
-            room_code: participant.roomCode,
-            first_name: participant.firstName,
-            last_name: participant.lastName,
-            whatsapp: participant.whatsapp,
-            email: participant.email,
-            joined_at: participant.joinedAt,
-          });
+            presentation_id: targetPresId,
+            room_code: participant.roomCode || code,
+            first_name: participant.firstName || '',
+            last_name: participant.lastName || '',
+            whatsapp: participant.whatsapp || '',
+            email: participant.email || '',
+            joined_at: participant.joinedAt || new Date().toISOString(),
+          };
+          const { error: pErr } = await supabase.from('participants').insert(partRow);
+          if (pErr) {
+            await supabase.from('participants').upsert(partRow);
+          }
         } catch (e) {
           console.warn('Supabase participant upsert failed:', e);
         }
@@ -311,20 +402,24 @@ export async function POST(req: NextRequest) {
 
       if (isSupabaseConfigured && supabase) {
         try {
-          await supabase.from('responses').upsert(
-            {
-              id: submission.id,
-              presentation_id: submission.presentationId,
-              question_id: submission.questionId,
-              participant_id: submission.participantId,
-              participant_name: submission.participantName,
-              participant_whatsapp: submission.participantWhatsapp,
-              participant_email: submission.participantEmail,
-              value: submission.value,
-              created_at: submission.createdAt,
-            },
-            { onConflict: 'id' }
-          );
+          const targetPresId =
+            (await ensurePresentationInSupabase(supabase, code, body.presentation)) ||
+            submission.presentationId;
+          const respRow = {
+            id: submission.id,
+            presentation_id: targetPresId,
+            question_id: submission.questionId,
+            participant_id: submission.participantId,
+            participant_name: submission.participantName || '',
+            participant_whatsapp: submission.participantWhatsapp || '',
+            participant_email: submission.participantEmail || '',
+            value: submission.value,
+            created_at: submission.createdAt || new Date().toISOString(),
+          };
+          const { error: rErr } = await supabase.from('responses').insert(respRow);
+          if (rErr) {
+            await supabase.from('responses').upsert(respRow, { onConflict: 'id' });
+          }
         } catch (e) {
           console.warn('Supabase response upsert failed:', e);
         }
@@ -351,32 +446,43 @@ export async function POST(req: NextRequest) {
 
       if (isSupabaseConfigured && supabase) {
         try {
-          if (participant) {
-            await supabase.from('participants').upsert({
+          const targetPresId =
+            (await ensurePresentationInSupabase(supabase, code, body.presentation)) ||
+            participant?.presentationId;
+
+          if (participant && targetPresId) {
+            const partRow = {
               id: participant.id,
-              presentation_id: participant.presentationId,
-              room_code: participant.roomCode,
-              first_name: participant.firstName,
-              last_name: participant.lastName,
-              whatsapp: participant.whatsapp,
-              email: participant.email,
-              joined_at: participant.joinedAt,
-            });
+              presentation_id: targetPresId,
+              room_code: participant.roomCode || code,
+              first_name: participant.firstName || '',
+              last_name: participant.lastName || '',
+              whatsapp: participant.whatsapp || '',
+              email: participant.email || '',
+              joined_at: participant.joinedAt || new Date().toISOString(),
+            };
+            const { error: pErr } = await supabase.from('participants').insert(partRow);
+            if (pErr) {
+              await supabase.from('participants').upsert(partRow);
+            }
           }
 
-          if (submissions.length > 0) {
+          if (submissions.length > 0 && targetPresId) {
             const rows = submissions.map((s) => ({
               id: s.id,
-              presentation_id: s.presentationId,
+              presentation_id: targetPresId,
               question_id: s.questionId,
               participant_id: s.participantId,
-              participant_name: s.participantName,
-              participant_whatsapp: s.participantWhatsapp,
-              participant_email: s.participantEmail,
+              participant_name: s.participantName || '',
+              participant_whatsapp: s.participantWhatsapp || '',
+              participant_email: s.participantEmail || '',
               value: s.value,
-              created_at: s.createdAt,
+              created_at: s.createdAt || new Date().toISOString(),
             }));
-            await supabase.from('responses').upsert(rows, { onConflict: 'id' });
+            const { error: rErr } = await supabase.from('responses').insert(rows);
+            if (rErr) {
+              await supabase.from('responses').upsert(rows, { onConflict: 'id' });
+            }
           }
         } catch (e) {
           console.warn('Supabase submit_survey batch failed:', e);
@@ -469,7 +575,14 @@ export async function POST(req: NextRequest) {
     if (action === 'reset_responses') {
       if (isSupabaseConfigured && supabase) {
         try {
-          await supabase.from('responses').delete().eq('room_code', code);
+          const { data: pres } = await supabase
+            .from('presentations')
+            .select('id')
+            .eq('code', code)
+            .maybeSingle();
+          if (pres?.id) {
+            await supabase.from('responses').delete().eq('presentation_id', pres.id);
+          }
         } catch (e) {
           console.warn('Supabase reset responses failed:', e);
         }
@@ -481,20 +594,24 @@ export async function POST(req: NextRequest) {
     }
 
     if (action === 'delete_presentation') {
-      const id = body.id;
+      let id = body.id;
       if (isSupabaseConfigured && supabase) {
         try {
+          if (!id) {
+            const { data: pres } = await supabase
+              .from('presentations')
+              .select('id')
+              .eq('code', code)
+              .maybeSingle();
+            if (pres?.id) id = pres.id;
+          }
           if (id) {
+            await supabase.from('responses').delete().eq('presentation_id', id);
+            await supabase.from('participants').delete().eq('presentation_id', id);
             await supabase.from('presentations').delete().eq('id', id);
           }
-          await supabase.from('presentations').delete().eq('code', code);
-          // Also clean up any orphan participants or responses
-          if (id) {
-            await supabase.from('participants').delete().eq('presentation_id', id);
-            await supabase.from('responses').delete().eq('presentation_id', id);
-          }
           await supabase.from('participants').delete().eq('room_code', code);
-          await supabase.from('responses').delete().eq('room_code', code);
+          await supabase.from('presentations').delete().eq('code', code);
         } catch (e) {
           console.warn('Supabase delete presentation failed:', e);
         }
