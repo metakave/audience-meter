@@ -69,6 +69,94 @@ export async function fetchPresentation(code: string): Promise<Presentation | nu
 }
 
 /**
+ * Fetch full presentation bundle (presentation, responses, participants) in a single parallel round-trip
+ */
+export async function fetchPresentationBundle(code: string): Promise<{
+  presentation: Presentation | null;
+  responses: ResponseSubmission[];
+  participants: Participant[];
+}> {
+  const supabase = getSupabase();
+  if (isSupabaseConfigured && supabase) {
+    try {
+      const { data: pData } = await supabase
+        .from('presentations')
+        .select('*')
+        .eq('code', code)
+        .maybeSingle();
+
+      if (pData) {
+        const [respRes, partRes] = await Promise.all([
+          supabase.from('responses').select('*').eq('presentation_id', pData.id).order('created_at', { ascending: false }),
+          supabase.from('participants').select('*').eq('presentation_id', pData.id).order('joined_at', { ascending: false }),
+        ]);
+
+        const presentation: Presentation = {
+          id: pData.id,
+          title: pData.title,
+          code: pData.code,
+          type: pData.type || (pData.id?.startsWith('survey_') ? 'survey' : 'presentation'),
+          description: pData.description || '',
+          surveySettings: pData.survey_settings || pData.surveySettings || undefined,
+          currentQuestionIndex: pData.current_question_index,
+          isLive: typeof pData.is_live === 'boolean' ? pData.is_live : true,
+          isLocked: typeof pData.is_locked === 'boolean' ? pData.is_locked : false,
+          lockForwardSlides: typeof pData.lock_forward_slides === 'boolean' ? pData.lock_forward_slides : false,
+          showResults: pData.show_results,
+          questions: pData.questions,
+          createdAt: pData.created_at,
+          updatedAt: pData.updated_at,
+        };
+
+        const responses: ResponseSubmission[] = (respRes.data || []).map((r: any) => ({
+          id: r.id,
+          presentationId: r.presentation_id,
+          questionId: r.question_id,
+          participantId: r.participant_id,
+          participantName: r.participant_name,
+          participantWhatsapp: r.participant_whatsapp,
+          participantEmail: r.participant_email,
+          value: r.value,
+          createdAt: r.created_at,
+        }));
+
+        const participants: Participant[] = (partRes.data || []).map((p: any) => ({
+          id: p.id,
+          presentationId: p.presentation_id,
+          roomCode: p.room_code,
+          firstName: p.first_name,
+          lastName: p.last_name,
+          whatsapp: p.whatsapp,
+          email: p.email,
+          joinedAt: p.joined_at,
+        }));
+
+        return { presentation, responses, participants };
+      }
+    } catch (err) {
+      console.warn('Supabase fetchPresentationBundle failed, falling back to sync API:', err);
+    }
+  }
+
+  // Fallback to sync API
+  try {
+    const res = await fetch(`/api/sync?code=${encodeURIComponent(code)}`);
+    if (res.ok) {
+      const json = await res.json();
+      return {
+        presentation: json.presentation || null,
+        responses: json.responses || [],
+        participants: json.participants || [],
+      };
+    }
+  } catch (err) {
+    console.error('API sync fetch error in bundle:', err);
+  }
+
+  return { presentation: null, responses: [], participants: [] };
+}
+
+/**
  * Register participant join
  */
 export async function registerParticipant(participant: Participant): Promise<boolean> {

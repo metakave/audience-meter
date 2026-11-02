@@ -39,8 +39,20 @@ import ThemeToggle from '@/components/ThemeToggle';
 import AdminGuard, { lockAdminSession } from '@/components/AdminGuard';
 
 export default function AdminDashboardPage() {
-  const [presentations, setPresentations] = useState<Presentation[]>([]);
-  const [loading, setLoading] = useState(true);
+  const [presentations, setPresentations] = useState<Presentation[]>(() => {
+    if (typeof window !== 'undefined') {
+      try {
+        const cached = localStorage.getItem('audiencemeter_cached_presentations');
+        if (cached) {
+          const parsed = JSON.parse(cached);
+          if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+        }
+      } catch {}
+    }
+    return DEFAULT_PRESENTATIONS;
+  });
+  const [loading, setLoading] = useState(false);
+  const [isRefreshing, setIsRefreshing] = useState(false);
   const [creating, setCreating] = useState(false);
   const [createType, setCreateType] = useState<'presentation' | 'survey'>('presentation');
   const [newTitle, setNewTitle] = useState('');
@@ -72,34 +84,42 @@ export default function AdminDashboardPage() {
   const [toastMessage, setToastMessage] = useState<string | null>(null);
 
   useEffect(() => {
-    async function checkHealthAndLoad() {
-      setLoading(true);
-      try {
-        const healthRes = await fetch('/api/health');
-        if (healthRes.ok) {
-          const healthJson = await healthRes.json();
-          setHealthStatus(healthJson);
-        }
-      } catch {}
+    let isMounted = true;
 
-      try {
-        const res = await fetch('/api/sync?action=list');
-        if (res.ok) {
-          const json = await res.json();
-          if (json.presentations && json.presentations.length > 0) {
-            setPresentations(json.presentations);
-          } else {
-            setPresentations(DEFAULT_PRESENTATIONS);
-          }
-        } else {
-          setPresentations(DEFAULT_PRESENTATIONS);
+    // 1. Fetch health asynchronously in the background (non-blocking)
+    fetch('/api/health')
+      .then((res) => (res.ok ? res.json() : null))
+      .then((healthJson) => {
+        if (isMounted && healthJson) setHealthStatus(healthJson);
+      })
+      .catch(() => {});
+
+    // 2. Fetch fresh presentations list in parallel
+    setIsRefreshing(true);
+    fetch('/api/sync?action=list')
+      .then((res) => (res.ok ? res.json() : null))
+      .then((json) => {
+        if (!isMounted) return;
+        if (json?.presentations && json.presentations.length > 0) {
+          setPresentations(json.presentations);
+          try {
+            localStorage.setItem('audiencemeter_cached_presentations', JSON.stringify(json.presentations));
+          } catch {}
         }
-      } catch {
-        setPresentations(DEFAULT_PRESENTATIONS);
-      }
-      setLoading(false);
-    }
-    checkHealthAndLoad();
+      })
+      .catch((err) => {
+        console.warn('Failed to refresh presentations list:', err);
+      })
+      .finally(() => {
+        if (isMounted) {
+          setLoading(false);
+          setIsRefreshing(false);
+        }
+      });
+
+    return () => {
+      isMounted = false;
+    };
   }, []);
 
   const handleCopySurveyLink = (code: string, e?: React.MouseEvent) => {
@@ -225,7 +245,11 @@ export default function AdminDashboardPage() {
     };
 
     await savePresentation(newPres);
-    setPresentations([newPres, ...presentations]);
+    const updated = [newPres, ...presentations];
+    setPresentations(updated);
+    try {
+      localStorage.setItem('audiencemeter_cached_presentations', JSON.stringify(updated));
+    } catch {}
     setNewTitle('');
     setNewDescription('');
     setCreating(false);
@@ -269,7 +293,13 @@ export default function AdminDashboardPage() {
     try {
       const ok = await deletePresentation(target.id, target.code);
       if (ok) {
-        setPresentations((prev) => prev.filter((p) => p.code !== target.code && p.id !== target.id));
+        setPresentations((prev) => {
+          const updated = prev.filter((p) => p.code !== target.code && p.id !== target.id);
+          try {
+            localStorage.setItem('audiencemeter_cached_presentations', JSON.stringify(updated));
+          } catch {}
+          return updated;
+        });
         setDeleteModalPres(null);
         setToastMessage(`Deleted "${target.title}" (PIN: ${target.code}) successfully.`);
         setTimeout(() => setToastMessage(null), 4500);
@@ -625,17 +655,58 @@ export default function AdminDashboardPage() {
             <span>📋 Survey Forms</span>
             <span>({presentations.filter((p) => p.type === 'survey').length})</span>
           </button>
+
+          {isRefreshing && (
+            <span
+              style={{
+                fontSize: '0.78rem',
+                color: 'var(--text-muted)',
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: '6px',
+                marginLeft: 'auto',
+              }}
+            >
+              <span
+                style={{
+                  width: '7px',
+                  height: '7px',
+                  borderRadius: '50%',
+                  background: '#10b981',
+                  boxShadow: '0 0 8px #10b981',
+                  display: 'inline-block',
+                }}
+              />
+              Synced
+            </span>
+          )}
         </div>
 
         {/* Presentations List */}
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(340px, 1fr))', gap: '20px' }}>
-          {presentations
-            .filter((p) => {
-              if (activeTab === 'presentation') return p.type !== 'survey';
-              if (activeTab === 'survey') return p.type === 'survey';
-              return true;
-            })
-            .map((pres) => {
+        {presentations.length === 0 && isRefreshing ? (
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(340px, 1fr))', gap: '20px' }}>
+            {[1, 2, 3].map((i) => (
+              <div
+                key={i}
+                className="glass-panel"
+                style={{
+                  height: '260px',
+                  borderRadius: '16px',
+                  background: 'rgba(255, 255, 255, 0.02)',
+                  border: '1px solid var(--border-subtle)',
+                }}
+              />
+            ))}
+          </div>
+        ) : (
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(340px, 1fr))', gap: '20px' }}>
+            {presentations
+              .filter((p) => {
+                if (activeTab === 'presentation') return p.type !== 'survey';
+                if (activeTab === 'survey') return p.type === 'survey';
+                return true;
+              })
+              .map((pres) => {
               const isSurvey = pres.type === 'survey';
               const hasDataBadge = (pres.participantCount ?? 0) > 0 || (pres.responseCount ?? 0) > 0;
               return (
@@ -969,7 +1040,8 @@ export default function AdminDashboardPage() {
                 </div>
               );
             })}
-        </div>
+          </div>
+        )}
 
         {/* Delete Confirmation Modal */}
         {deleteModalPres && (

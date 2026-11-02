@@ -76,38 +76,49 @@ export async function GET(req: NextRequest) {
   if (action === 'list') {
     if (isSupabaseConfigured && supabase) {
       try {
-        const { data: presList, error } = await supabase
-          .from('presentations')
-          .select('*')
-          .order('created_at', { ascending: false });
+        // Run all list queries concurrently in parallel
+        const [presRes, partRes, respRes] = await Promise.all([
+          supabase
+            .from('presentations')
+            .select('*')
+            .order('created_at', { ascending: false }),
+          supabase
+            .from('participants')
+            .select('presentation_id, room_code'),
+          supabase
+            .from('responses')
+            .select('presentation_id'),
+        ]);
+
+        const presList = presRes.data;
+        const error = presRes.error;
+        const participantsData = partRes.data;
+        const responsesData = respRes.data;
 
         if (presList && !error) {
-          // If Supabase has zero presentations on initial launch, auto-seed DEFAULT_PRESENTATIONS
+          // If Supabase has zero presentations on initial launch, auto-seed in parallel
           if (presList.length === 0) {
-            for (const defaultPres of DEFAULT_PRESENTATIONS) {
-              await supabase.from('presentations').upsert({
-                id: defaultPres.id,
-                title: defaultPres.title,
-                code: defaultPres.code,
-                current_question_index: defaultPres.currentQuestionIndex,
-                is_live: defaultPres.isLive,
-                is_locked: defaultPres.isLocked,
-                show_results: defaultPres.showResults,
-                questions: defaultPres.questions,
-                created_at: defaultPres.createdAt,
-                updated_at: new Date().toISOString(),
-              });
-            }
-            return NextResponse.json({ success: true, presentations: DEFAULT_PRESENTATIONS });
+            await Promise.all(
+              DEFAULT_PRESENTATIONS.map((defaultPres) =>
+                supabase.from('presentations').upsert({
+                  id: defaultPres.id,
+                  title: defaultPres.title,
+                  code: defaultPres.code,
+                  current_question_index: defaultPres.currentQuestionIndex,
+                  is_live: defaultPres.isLive,
+                  is_locked: defaultPres.isLocked,
+                  show_results: defaultPres.showResults,
+                  questions: defaultPres.questions,
+                  created_at: defaultPres.createdAt,
+                  updated_at: new Date().toISOString(),
+                })
+              )
+            );
+            return NextResponse.json(
+              { success: true, presentations: DEFAULT_PRESENTATIONS },
+              { headers: { 'Cache-Control': 'public, s-maxage=2, stale-while-revalidate=5' } }
+            );
           }
-
-          // Fetch participant and response counts
-          const { data: participantsData } = await supabase
-            .from('participants')
-            .select('presentation_id, room_code');
-          const { data: responsesData } = await supabase
-            .from('responses')
-            .select('presentation_id');
 
           const partCountMap: Record<string, number> = {};
           (participantsData || []).forEach((p: any) => {
@@ -139,7 +150,10 @@ export async function GET(req: NextRequest) {
             responseCount: Math.max(respCountMap[p.id] ?? 0, (store.responses[p.code] || []).length),
           }));
 
-          return NextResponse.json({ success: true, presentations: formatted });
+          return NextResponse.json(
+            { success: true, presentations: formatted },
+            { headers: { 'Cache-Control': 'public, s-maxage=2, stale-while-revalidate=5' } }
+          );
         }
       } catch (e) {
         console.warn('Supabase list fetch error:', e);
@@ -152,7 +166,10 @@ export async function GET(req: NextRequest) {
       participantCount: (store.participants[p.code] || []).length,
       responseCount: (store.responses[p.code] || []).length,
     }));
-    return NextResponse.json({ success: true, presentations: list });
+    return NextResponse.json(
+      { success: true, presentations: list },
+      { headers: { 'Cache-Control': 'public, s-maxage=2, stale-while-revalidate=5' } }
+    );
   }
 
   if (!code) {

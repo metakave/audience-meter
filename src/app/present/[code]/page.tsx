@@ -4,6 +4,7 @@ import React, { useEffect, useState, use, Suspense } from 'react';
 import {
   fetchPresentation,
   fetchResponses,
+  fetchPresentationBundle,
   aggregateQuestionResults,
   updatePresentationState,
 } from '@/lib/storage';
@@ -60,11 +61,10 @@ function PresenterLiveContent({
 
     async function loadData() {
       setLoading(true);
-      const pres = await fetchPresentation(code);
-      if (pres) {
-        setPresentation(pres);
-        const resps = await fetchResponses(pres.id, code);
-        setResponses(resps);
+      const bundle = await fetchPresentationBundle(code);
+      if (bundle.presentation) {
+        setPresentation(bundle.presentation);
+        setResponses(bundle.responses);
       }
       setLoading(false);
     }
