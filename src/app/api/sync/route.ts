@@ -765,12 +765,26 @@ export async function POST(req: NextRequest) {
             .maybeSingle();
           const targetIds = pres?.id ? (pres.id === code ? [code] : [pres.id, code]) : [code];
 
-          await Promise.all([
+          const [r1, r2, p1, p2] = await Promise.all([
             supabase.from('responses').delete().in('presentation_id', targetIds),
             supabase.from('responses').delete().eq('room_code', code),
             supabase.from('participants').delete().in('presentation_id', targetIds),
             supabase.from('participants').delete().eq('room_code', code),
           ]);
+          if (r1.error || r2.error || p1.error || p2.error) {
+            console.warn('Supabase reset error details:', {
+              r1: r1.error,
+              r2: r2.error,
+              p1: p1.error,
+              p2: p2.error,
+            });
+            // Also attempt direct delete by specific participant IDs
+            const { data: existingParts } = await supabase.from('participants').select('id').eq('room_code', code);
+            if (existingParts && existingParts.length > 0) {
+              const pids = existingParts.map((p: any) => p.id);
+              await supabase.from('participants').delete().in('id', pids);
+            }
+          }
         } catch (e) {
           console.warn('Supabase reset responses failed:', e);
         }
