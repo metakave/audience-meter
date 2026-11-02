@@ -84,10 +84,10 @@ export async function GET(req: NextRequest) {
             .order('created_at', { ascending: false }),
           supabase
             .from('participants')
-            .select('presentation_id, room_code'),
+            .select('id, presentation_id, room_code'),
           supabase
             .from('responses')
-            .select('presentation_id'),
+            .select('id, presentation_id, participant_id'),
         ]);
 
         const presList = presRes.data;
@@ -120,35 +120,70 @@ export async function GET(req: NextRequest) {
             );
           }
 
-          const partCountMap: Record<string, number> = {};
-          (participantsData || []).forEach((p: any) => {
-            if (p.presentation_id) partCountMap[p.presentation_id] = (partCountMap[p.presentation_id] || 0) + 1;
-            if (p.room_code) partCountMap[p.room_code] = (partCountMap[p.room_code] || 0) + 1;
+          // Count unique participants / submissions per presentation
+          const partIdMap: Record<string, Set<string>> = {};
+          (participantsData || []).forEach((p: any, idx: number) => {
+            const pid = p.id || `part_${idx}`;
+            if (p.presentation_id) {
+              if (!partIdMap[p.presentation_id]) partIdMap[p.presentation_id] = new Set();
+              partIdMap[p.presentation_id].add(pid);
+            }
+            if (p.room_code) {
+              if (!partIdMap[p.room_code]) partIdMap[p.room_code] = new Set();
+              partIdMap[p.room_code].add(pid);
+            }
           });
 
+          // Count responses and unique respondent submissions from responses table
+          const respPartIdMap: Record<string, Set<string>> = {};
           const respCountMap: Record<string, number> = {};
           (responsesData || []).forEach((r: any) => {
-            if (r.presentation_id) respCountMap[r.presentation_id] = (respCountMap[r.presentation_id] || 0) + 1;
+            if (r.presentation_id) {
+              respCountMap[r.presentation_id] = (respCountMap[r.presentation_id] || 0) + 1;
+              if (r.participant_id) {
+                if (!respPartIdMap[r.presentation_id]) respPartIdMap[r.presentation_id] = new Set();
+                respPartIdMap[r.presentation_id].add(r.participant_id);
+              }
+            }
           });
 
-          const formatted: Presentation[] = presList.map((p: any) => ({
-            id: p.id,
-            title: p.title,
-            code: p.code,
-            type: p.type || (p.id?.startsWith('survey_') ? 'survey' : 'presentation'),
-            description: p.description || '',
-            surveySettings: p.survey_settings || p.surveySettings || undefined,
-            currentQuestionIndex: p.current_question_index,
-            isLive: typeof p.is_live === 'boolean' ? p.is_live : true,
-            isLocked: typeof p.is_locked === 'boolean' ? p.is_locked : false,
-            lockForwardSlides: typeof p.lock_forward_slides === 'boolean' ? p.lock_forward_slides : false,
-            showResults: p.show_results,
-            questions: p.questions,
-            createdAt: p.created_at,
-            updatedAt: p.updated_at,
-            participantCount: Math.max(partCountMap[p.id] ?? partCountMap[p.code] ?? 0, (store.participants[p.code] || []).length),
-            responseCount: Math.max(respCountMap[p.id] ?? 0, (store.responses[p.code] || []).length),
-          }));
+          const formatted: Presentation[] = presList.map((p: any) => {
+            const partSubmissions = Math.max(
+              partIdMap[p.id]?.size || 0,
+              partIdMap[p.code]?.size || 0
+            );
+            const respSubmissions = Math.max(
+              respPartIdMap[p.id]?.size || 0,
+              respPartIdMap[p.code]?.size || 0
+            );
+            const storePartCount = (store.participants[p.code] || []).length;
+            const storeRespPartCount = new Set((store.responses[p.code] || []).map((r: any) => r.participantId)).size;
+
+            const participantCount = Math.max(partSubmissions, respSubmissions, storePartCount, storeRespPartCount);
+            const responseCount = Math.max(
+              (respCountMap[p.id] || 0) + (p.id !== p.code ? (respCountMap[p.code] || 0) : 0),
+              (store.responses[p.code] || []).length
+            );
+
+            return {
+              id: p.id,
+              title: p.title,
+              code: p.code,
+              type: p.type || (p.id?.startsWith('survey_') ? 'survey' : 'presentation'),
+              description: p.description || '',
+              surveySettings: p.survey_settings || p.surveySettings || undefined,
+              currentQuestionIndex: p.current_question_index,
+              isLive: typeof p.is_live === 'boolean' ? p.is_live : true,
+              isLocked: typeof p.is_locked === 'boolean' ? p.is_locked : false,
+              lockForwardSlides: typeof p.lock_forward_slides === 'boolean' ? p.lock_forward_slides : false,
+              showResults: p.show_results,
+              questions: p.questions,
+              createdAt: p.created_at,
+              updatedAt: p.updated_at,
+              participantCount,
+              responseCount,
+            };
+          });
 
           return NextResponse.json(
             { success: true, presentations: formatted },
@@ -161,11 +196,15 @@ export async function GET(req: NextRequest) {
     }
 
     const store = getStoreData();
-    const list = Object.values(store.presentations).map((p) => ({
-      ...p,
-      participantCount: (store.participants[p.code] || []).length,
-      responseCount: (store.responses[p.code] || []).length,
-    }));
+    const list = Object.values(store.presentations).map((p) => {
+      const storePartCount = (store.participants[p.code] || []).length;
+      const storeRespPartCount = new Set((store.responses[p.code] || []).map((r: any) => r.participantId)).size;
+      return {
+        ...p,
+        participantCount: Math.max(storePartCount, storeRespPartCount),
+        responseCount: (store.responses[p.code] || []).length,
+      };
+    });
     return NextResponse.json(
       { success: true, presentations: list },
       { headers: { 'Cache-Control': 'public, s-maxage=2, stale-while-revalidate=5' } }

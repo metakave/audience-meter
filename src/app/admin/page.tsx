@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useCallback } from 'react';
 import { Presentation } from '@/types';
 import { DEFAULT_PRESENTATIONS } from '@/lib/default-data';
 import { savePresentation, deletePresentation, updatePresentationState } from '@/lib/storage';
@@ -34,6 +34,7 @@ import {
   BarChart3,
   Copy,
   Check,
+  RotateCcw,
 } from 'lucide-react';
 import ThemeToggle from '@/components/ThemeToggle';
 import AdminGuard, { lockAdminSession } from '@/components/AdminGuard';
@@ -83,6 +84,27 @@ export default function AdminDashboardPage() {
   });
   const [toastMessage, setToastMessage] = useState<string | null>(null);
 
+  const fetchPresentationsList = useCallback(async (showIndicator = true) => {
+    if (showIndicator) setIsRefreshing(true);
+    try {
+      const res = await fetch('/api/sync?action=list', { cache: 'no-store' });
+      if (res.ok) {
+        const json = await res.json();
+        if (json?.presentations && json.presentations.length > 0) {
+          setPresentations(json.presentations);
+          try {
+            localStorage.setItem('audiencemeter_cached_presentations', JSON.stringify(json.presentations));
+          } catch {}
+        }
+      }
+    } catch (err) {
+      console.warn('Failed to refresh presentations list:', err);
+    } finally {
+      setLoading(false);
+      if (showIndicator) setIsRefreshing(false);
+    }
+  }, []);
+
   useEffect(() => {
     let isMounted = true;
 
@@ -94,33 +116,26 @@ export default function AdminDashboardPage() {
       })
       .catch(() => {});
 
-    // 2. Fetch fresh presentations list in parallel
-    setIsRefreshing(true);
-    fetch('/api/sync?action=list')
-      .then((res) => (res.ok ? res.json() : null))
-      .then((json) => {
-        if (!isMounted) return;
-        if (json?.presentations && json.presentations.length > 0) {
-          setPresentations(json.presentations);
-          try {
-            localStorage.setItem('audiencemeter_cached_presentations', JSON.stringify(json.presentations));
-          } catch {}
-        }
-      })
-      .catch((err) => {
-        console.warn('Failed to refresh presentations list:', err);
-      })
-      .finally(() => {
-        if (isMounted) {
-          setLoading(false);
-          setIsRefreshing(false);
-        }
-      });
+    // 2. Fetch fresh presentations list
+    fetchPresentationsList(true);
+
+    // 3. Auto-refresh when tab regains focus
+    const handleFocus = () => {
+      fetchPresentationsList(false);
+    };
+    window.addEventListener('focus', handleFocus);
+
+    // 4. Background refresh every 12 seconds to keep response counts in sync
+    const interval = setInterval(() => {
+      fetchPresentationsList(false);
+    }, 12000);
 
     return () => {
       isMounted = false;
+      window.removeEventListener('focus', handleFocus);
+      clearInterval(interval);
     };
-  }, []);
+  }, [fetchPresentationsList]);
 
   const handleCopySurveyLink = (code: string, e?: React.MouseEvent) => {
     if (e) e.stopPropagation();
@@ -656,30 +671,31 @@ export default function AdminDashboardPage() {
             <span>({presentations.filter((p) => p.type === 'survey').length})</span>
           </button>
 
-          {isRefreshing && (
-            <span
+          <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: '10px' }}>
+            <button
+              type="button"
+              onClick={() => fetchPresentationsList(true)}
+              disabled={isRefreshing}
               style={{
+                padding: '6px 12px',
+                borderRadius: '8px',
                 fontSize: '0.78rem',
-                color: 'var(--text-muted)',
+                fontWeight: 600,
+                cursor: isRefreshing ? 'default' : 'pointer',
                 display: 'inline-flex',
                 alignItems: 'center',
                 gap: '6px',
-                marginLeft: 'auto',
+                background: 'rgba(255, 255, 255, 0.05)',
+                border: '1px solid var(--border-subtle)',
+                color: isRefreshing ? '#10b981' : 'var(--text-secondary)',
+                transition: 'all 0.15s ease',
               }}
+              title="Refresh submissions and live responses"
             >
-              <span
-                style={{
-                  width: '7px',
-                  height: '7px',
-                  borderRadius: '50%',
-                  background: '#10b981',
-                  boxShadow: '0 0 8px #10b981',
-                  display: 'inline-block',
-                }}
-              />
-              Synced
-            </span>
-          )}
+              <RotateCcw size={12} style={{ animation: isRefreshing ? 'spin 0.8s linear infinite' : 'none' }} />
+              <span>{isRefreshing ? 'Syncing...' : 'Refresh'}</span>
+            </button>
+          </div>
         </div>
 
         {/* Presentations List */}
@@ -961,15 +977,30 @@ export default function AdminDashboardPage() {
 
                     {/* Secondary Row: View Responses & Edit/Test Link */}
                     <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px' }}>
-                      <button
-                        type="button"
-                        onClick={(e) => handleOpenResponsesModal(pres, e)}
-                        className="btn-secondary"
-                        style={{ padding: '8px 12px', fontSize: '0.82rem', color: '#818cf8' }}
-                        title="View live responses, analytics, and answers table"
-                      >
-                        <BarChart3 size={14} /> View Responses
-                      </button>
+                      {(() => {
+                        const submissionCount = pres.participantCount && pres.participantCount > 0
+                          ? pres.participantCount
+                          : (isSurvey && pres.responseCount
+                              ? Math.max(1, Math.ceil(pres.responseCount / Math.max(1, pres.questions?.length || 1)))
+                              : (pres.participantCount || 0));
+                        return (
+                          <button
+                            type="button"
+                            onClick={(e) => handleOpenResponsesModal(pres, e)}
+                            className="btn-secondary"
+                            style={{
+                              padding: '8px 12px',
+                              fontSize: '0.82rem',
+                              color: submissionCount > 0 ? '#818cf8' : 'var(--text-secondary)',
+                              fontWeight: submissionCount > 0 ? 700 : 500,
+                            }}
+                            title="View live responses, analytics, and answers table"
+                          >
+                            <BarChart3 size={14} />
+                            <span>View Responses{submissionCount > 0 ? ` (${submissionCount})` : ''}</span>
+                          </button>
+                        );
+                      })()}
 
                       {isSurvey ? (
                         <a
