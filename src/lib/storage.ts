@@ -265,6 +265,7 @@ export async function submitResponse(submission: ResponseSubmission, roomCode: s
         {
           id: submission.id,
           presentation_id: submission.presentationId,
+          room_code: roomCode,
           question_id: submission.questionId,
           participant_id: submission.participantId,
           participant_name: submission.participantName,
@@ -389,6 +390,7 @@ export async function submitSurvey(
         const rows = submissions.map((s) => ({
           id: s.id,
           presentation_id: targetPresId,
+          room_code: roomCode,
           question_id: s.questionId,
           participant_id: s.participantId,
           participant_name: s.participantName,
@@ -410,6 +412,20 @@ export async function submitSurvey(
     } catch (e) {
       console.warn('Supabase survey batch submit failed on client:', e);
     }
+  }
+
+  // Backup to client localStorage so offline / network glitches never lose response
+  if (typeof window !== 'undefined') {
+    try {
+      const backupKey = `audiencemeter_survey_submissions_${roomCode}`;
+      const existing = JSON.parse(localStorage.getItem(backupKey) || '[]');
+      existing.push({
+        participant,
+        submissions,
+        savedAt: new Date().toISOString(),
+      });
+      localStorage.setItem(backupKey, JSON.stringify(existing));
+    } catch {}
   }
 
   try {

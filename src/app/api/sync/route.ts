@@ -554,6 +554,7 @@ export async function POST(req: NextRequest) {
           const respRow = {
             id: submission.id,
             presentation_id: targetPresId,
+            room_code: code,
             question_id: submission.questionId,
             participant_id: submission.participantId,
             participant_name: submission.participantName || '',
@@ -617,6 +618,7 @@ export async function POST(req: NextRequest) {
             const rows = submissions.map((s) => ({
               id: s.id,
               presentation_id: targetPresId,
+              room_code: code,
               question_id: s.questionId,
               participant_id: s.participantId,
               participant_name: s.participantName || '',

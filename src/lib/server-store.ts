@@ -3,26 +3,58 @@ import path from 'path';
 import { Presentation, Participant, ResponseSubmission } from '@/types';
 import { DEFAULT_PRESENTATIONS } from '@/lib/default-data';
 
-interface StoreData {
+export interface StoreData {
   presentations: Record<string, Presentation>;
   participants: Record<string, Participant[]>;
   responses: Record<string, ResponseSubmission[]>;
   deletedCodes?: string[];
 }
 
-const DATA_DIR = path.join(process.cwd(), '.data');
-const STORE_FILE = path.join(DATA_DIR, 'store.json');
+declare global {
+  // eslint-disable-next-line no-var
+  var __AUDIENCEMETER_STORE__: StoreData | undefined;
+}
 
-function ensureDataFile(): StoreData {
+function getStoreDir(): string {
+  // Check if process.cwd()/.data is writable
   try {
-    if (!fs.existsSync(DATA_DIR)) {
-      fs.mkdirSync(DATA_DIR, { recursive: true });
+    const cwdData = path.join(process.cwd(), '.data');
+    if (!fs.existsSync(cwdData)) {
+      fs.mkdirSync(cwdData, { recursive: true });
     }
-    if (fs.existsSync(STORE_FILE)) {
-      const content = fs.readFileSync(STORE_FILE, 'utf-8');
+    fs.accessSync(cwdData, fs.constants.W_OK);
+    return cwdData;
+  } catch {
+    // On serverless platforms (Vercel / AWS Lambda), process.cwd() is read-only.
+    // /tmp is the writable storage space.
+    try {
+      const tmpData = path.join('/tmp', '.audiencemeter_data');
+      if (!fs.existsSync(tmpData)) {
+        fs.mkdirSync(tmpData, { recursive: true });
+      }
+      return tmpData;
+    } catch {
+      return '/tmp';
+    }
+  }
+}
+
+function getStoreFilePath(): string {
+  return path.join(getStoreDir(), 'store.json');
+}
+
+function loadInitialStore(): StoreData {
+  const storeFile = getStoreFilePath();
+  try {
+    if (fs.existsSync(storeFile)) {
+      const content = fs.readFileSync(storeFile, 'utf-8');
       if (content) {
         const data: StoreData = JSON.parse(content);
         if (!data.deletedCodes) data.deletedCodes = [];
+        if (!data.presentations) data.presentations = {};
+        if (!data.participants) data.participants = {};
+        if (!data.responses) data.responses = {};
+
         let updated = false;
         for (const pres of DEFAULT_PRESENTATIONS) {
           if (!data.presentations[pres.code] && !data.deletedCodes.includes(pres.code)) {
@@ -43,21 +75,22 @@ function ensureDataFile(): StoreData {
         }
         if (updated) {
           try {
-            fs.writeFileSync(STORE_FILE, JSON.stringify(data, null, 2), 'utf-8');
+            fs.writeFileSync(storeFile, JSON.stringify(data, null, 2), 'utf-8');
           } catch {}
         }
         return data;
       }
     }
   } catch (err) {
-    console.warn('Could not read store file:', err);
+    console.warn('Could not read store file from disk:', err);
   }
 
-  // Initial default data
+  // Initial default data fallback
   const initialData: StoreData = {
     presentations: {},
     participants: {},
     responses: {},
+    deletedCodes: [],
   };
 
   for (const pres of DEFAULT_PRESENTATIONS) {
@@ -67,23 +100,27 @@ function ensureDataFile(): StoreData {
   }
 
   try {
-    fs.writeFileSync(STORE_FILE, JSON.stringify(initialData, null, 2), 'utf-8');
+    fs.writeFileSync(storeFile, JSON.stringify(initialData, null, 2), 'utf-8');
   } catch {}
 
   return initialData;
 }
 
 export function getStoreData(): StoreData {
-  return ensureDataFile();
+  if (!globalThis.__AUDIENCEMETER_STORE__) {
+    globalThis.__AUDIENCEMETER_STORE__ = loadInitialStore();
+  }
+  return globalThis.__AUDIENCEMETER_STORE__;
 }
 
 export function saveStoreData(data: StoreData) {
+  // Always update in-memory global reference immediately
+  globalThis.__AUDIENCEMETER_STORE__ = data;
+
   try {
-    if (!fs.existsSync(DATA_DIR)) {
-      fs.mkdirSync(DATA_DIR, { recursive: true });
-    }
-    fs.writeFileSync(STORE_FILE, JSON.stringify(data, null, 2), 'utf-8');
+    const storeFile = getStoreFilePath();
+    fs.writeFileSync(storeFile, JSON.stringify(data, null, 2), 'utf-8');
   } catch (err) {
-    console.warn('Could not write store file:', err);
+    console.warn('Could not write store file to disk:', err);
   }
 }
