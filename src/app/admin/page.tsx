@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useEffect, useState, useCallback } from 'react';
+import React, { useEffect, useState, useCallback, useMemo, useRef } from 'react';
 import { Presentation } from '@/types';
 import { DEFAULT_PRESENTATIONS } from '@/lib/default-data';
 import { savePresentation, deletePresentation, updatePresentationState } from '@/lib/storage';
@@ -35,6 +35,7 @@ import {
   Copy,
   Check,
   RotateCcw,
+  Search,
 } from 'lucide-react';
 import ThemeToggle from '@/components/ThemeToggle';
 import AdminGuard, { lockAdminSession } from '@/components/AdminGuard';
@@ -69,6 +70,10 @@ export default function AdminDashboardPage() {
     participants: any[];
   }>({ loading: false, responses: [], participants: [] });
   const [responsesTab, setResponsesTab] = useState<'analytics' | 'grid'>('analytics');
+  const responsesCache = useRef<Record<string, { responses: any[]; participants: any[]; timestamp: number }>>({});
+  const [questionSearch, setQuestionSearch] = useState('');
+  const [questionCurrentPage, setQuestionCurrentPage] = useState<number>(1);
+  const [questionsPerPage, setQuestionsPerPage] = useState<number>(15);
 
   // Deletion modal state
   const [deleteModalPres, setDeleteModalPres] = useState<Presentation | null>(null);
@@ -149,24 +154,100 @@ export default function AdminDashboardPage() {
     if (e) e.stopPropagation();
     setResponsesModalPres(pres);
     setResponsesTab('analytics');
-    setResponsesData({ loading: true, responses: [], participants: [] });
+    setQuestionSearch('');
+    setQuestionCurrentPage(1);
+
+    // Instant SWR: if cached responses exist, display immediately (0ms perception!)
+    const cached = responsesCache.current[pres.code];
+    if (cached) {
+      setResponsesData({
+        loading: false,
+        responses: cached.responses,
+        participants: cached.participants,
+      });
+    } else {
+      setResponsesData({ loading: true, responses: [], participants: [] });
+    }
 
     try {
-      const res = await fetch(`/api/sync?code=${encodeURIComponent(pres.code)}`);
+      // High-speed parallel query passing both room code and presentation id
+      const res = await fetch(
+        `/api/sync?code=${encodeURIComponent(pres.code)}&id=${encodeURIComponent(pres.id)}`,
+        { cache: 'no-store' }
+      );
       if (res.ok) {
         const data = await res.json();
+        const freshResponses = data.responses || [];
+        const freshParticipants = data.participants || [];
+
+        // Save to in-memory client cache
+        responsesCache.current[pres.code] = {
+          responses: freshResponses,
+          participants: freshParticipants,
+          timestamp: Date.now(),
+        };
+
         setResponsesData({
           loading: false,
-          responses: data.responses || [],
-          participants: data.participants || [],
+          responses: freshResponses,
+          participants: freshParticipants,
         });
-      } else {
+      } else if (!cached) {
         setResponsesData({ loading: false, responses: [], participants: [] });
       }
     } catch {
-      setResponsesData({ loading: false, responses: [], participants: [] });
+      if (!cached) {
+        setResponsesData({ loading: false, responses: [], participants: [] });
+      }
     }
   };
+
+  // Pre-index responses by questionId so lookups are O(1) instead of .filter() inside render
+  const responsesByQuestion = useMemo(() => {
+    const map: Record<string, any[]> = {};
+    for (const r of responsesData.responses) {
+      const qid = r.questionId;
+      if (!map[qid]) map[qid] = [];
+      map[qid].push(r);
+    }
+    return map;
+  }, [responsesData.responses]);
+
+  // Pre-compute user grid rows
+  const userRows = useMemo(() => {
+    const userMap = new Map<string, any>();
+    responsesData.responses.forEach((r: any) => {
+      if (!userMap.has(r.participantId)) {
+        userMap.set(r.participantId, {
+          id: r.participantId,
+          name: r.participantName || 'Anonymous',
+          whatsapp: r.participantWhatsapp || 'N/A',
+          email: r.participantEmail || 'N/A',
+          submittedAt: r.createdAt,
+          answers: {},
+        });
+      }
+      userMap.get(r.participantId).answers[r.questionId] = r.value;
+    });
+    return Array.from(userMap.values());
+  }, [responsesData.responses]);
+
+  // Filtered & paginated questions for Question Breakdown
+  const filteredQuestions = useMemo(() => {
+    if (!responsesModalPres) return [];
+    if (!questionSearch.trim()) return responsesModalPres.questions;
+    const qLower = questionSearch.toLowerCase();
+    return responsesModalPres.questions.filter((q, idx) => {
+      const qNum = `q${idx + 1}`.toLowerCase();
+      const qNumSpaced = `question ${idx + 1}`.toLowerCase();
+      return (
+        q.title.toLowerCase().includes(qLower) ||
+        qNum.includes(qLower) ||
+        qNumSpaced.includes(qLower) ||
+        q.type.toLowerCase().includes(qLower)
+      );
+    });
+  }, [responsesModalPres, questionSearch]);
 
   const handleCreateNew = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -1570,10 +1651,31 @@ export default function AdminDashboardPage() {
 
               {/* Modal Body: Scrollable Content */}
               <div style={{ flex: 1, overflowY: 'auto', padding: '24px 28px' }}>
-                {responsesData.loading ? (
-                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '240px', gap: '10px' }}>
-                    <Loader2 size={24} className="animate-spin" color="var(--accent-primary)" />
-                    <span style={{ color: 'var(--text-secondary)' }}>Loading responses from database...</span>
+                {responsesData.loading && responsesData.responses.length === 0 ? (
+                  /* Instant Skeleton Loading Cards */
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '10px', color: 'var(--text-secondary)', fontSize: '0.9rem', marginBottom: '8px' }}>
+                      <Loader2 size={18} className="animate-spin" color="var(--accent-primary)" />
+                      <span>Loading responses from database...</span>
+                    </div>
+                    {[1, 2, 3].map((i) => (
+                      <div
+                        key={i}
+                        className="glass-panel"
+                        style={{
+                          padding: '20px 24px',
+                          borderRadius: '14px',
+                          border: '1px solid var(--border-subtle)',
+                        }}
+                      >
+                        <div style={{ width: '120px', height: '14px', borderRadius: '4px', background: 'rgba(255, 255, 255, 0.08)', marginBottom: '10px' }} />
+                        <div style={{ width: '60%', height: '20px', borderRadius: '4px', background: 'rgba(255, 255, 255, 0.06)', marginBottom: '16px' }} />
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                          <div style={{ width: '100%', height: '32px', borderRadius: '8px', background: 'rgba(255, 255, 255, 0.03)' }} />
+                          <div style={{ width: '100%', height: '32px', borderRadius: '8px', background: 'rgba(255, 255, 255, 0.03)' }} />
+                        </div>
+                      </div>
+                    ))}
                   </div>
                 ) : responsesData.responses.length === 0 ? (
                   <div style={{ textAlign: 'center', padding: '60px 20px', color: 'var(--text-muted)' }}>
@@ -1599,229 +1701,326 @@ export default function AdminDashboardPage() {
                   </div>
                 ) : responsesTab === 'analytics' ? (
                   /* Question Breakdown / Charts Tab */
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: '24px' }}>
-                    {responsesModalPres.questions.map((q, idx) => {
-                      const qResponses = responsesData.responses.filter((r: any) => r.questionId === q.id);
-                      const totalQ = qResponses.length;
-
-                      return (
-                        <div
-                          key={q.id}
-                          className="glass-panel"
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
+                    {/* Controls Bar: Search & Quick Pagination */}
+                    <div
+                      style={{
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'space-between',
+                        flexWrap: 'wrap',
+                        gap: '12px',
+                        padding: '12px 16px',
+                        borderRadius: '12px',
+                        background: 'rgba(255, 255, 255, 0.02)',
+                        border: '1px solid var(--border-subtle)',
+                      }}
+                    >
+                      <div style={{ position: 'relative', maxWidth: '320px', width: '100%' }}>
+                        <Search
+                          size={15}
                           style={{
-                            padding: '20px 24px',
-                            borderRadius: '14px',
-                            border: '1px solid var(--border-subtle)',
+                            position: 'absolute',
+                            left: '12px',
+                            top: '50%',
+                            transform: 'translateY(-50%)',
+                            color: 'var(--text-muted)',
                           }}
-                        >
-                          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '14px', flexWrap: 'wrap', gap: '8px' }}>
-                            <div>
-                              <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '4px' }}>
-                                <span style={{ fontSize: '0.74rem', fontWeight: 700, color: 'var(--accent-primary)', textTransform: 'uppercase' }}>
-                                  Question {idx + 1}
-                                </span>
-                                <span style={{ fontSize: '0.7rem', padding: '2px 6px', borderRadius: '4px', background: 'rgba(255, 255, 255, 0.06)', color: 'var(--text-secondary)' }}>
-                                  {q.type.replace('_', ' ').toUpperCase()}
-                                </span>
-                                {q.required && <span style={{ color: '#ef4444', fontWeight: 700 }}>*</span>}
+                        />
+                        <input
+                          type="text"
+                          placeholder="Search questions (e.g. Q12 or AI)..."
+                          value={questionSearch}
+                          onChange={(e) => {
+                            setQuestionSearch(e.target.value);
+                            setQuestionCurrentPage(1);
+                          }}
+                          style={{
+                            width: '100%',
+                            padding: '8px 12px 8px 34px',
+                            borderRadius: '8px',
+                            fontSize: '0.84rem',
+                            background: 'rgba(255, 255, 255, 0.04)',
+                            border: '1px solid var(--border-subtle)',
+                            color: 'var(--text-primary)',
+                          }}
+                        />
+                      </div>
+
+                      {filteredQuestions.length > 15 && (
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '6px', flexWrap: 'wrap' }}>
+                          {Array.from({ length: Math.ceil(filteredQuestions.length / questionsPerPage) }).map((_, pIdx) => {
+                            const pNum = pIdx + 1;
+                            const pStart = (pNum - 1) * questionsPerPage + 1;
+                            const pEnd = Math.min(pNum * questionsPerPage, filteredQuestions.length);
+                            const isActive = questionsPerPage > 0 && questionCurrentPage === pNum;
+                            return (
+                              <button
+                                key={pNum}
+                                type="button"
+                                onClick={() => setQuestionCurrentPage(pNum)}
+                                style={{
+                                  padding: '5px 10px',
+                                  borderRadius: '6px',
+                                  fontSize: '0.78rem',
+                                  fontWeight: 600,
+                                  cursor: 'pointer',
+                                  border: `1px solid ${isActive ? 'var(--accent-primary)' : 'var(--border-subtle)'}`,
+                                  background: isActive ? 'var(--accent-primary)' : 'rgba(255, 255, 255, 0.04)',
+                                  color: isActive ? '#ffffff' : 'var(--text-secondary)',
+                                  transition: 'all 0.15s ease',
+                                }}
+                              >
+                                Part {pNum} ({pStart}–{pEnd})
+                              </button>
+                            );
+                          })}
+
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setQuestionsPerPage(questionsPerPage === 0 ? 15 : 0);
+                              setQuestionCurrentPage(1);
+                            }}
+                            style={{
+                              padding: '5px 10px',
+                              borderRadius: '6px',
+                              fontSize: '0.78rem',
+                              fontWeight: 600,
+                              cursor: 'pointer',
+                              border: '1px solid var(--border-subtle)',
+                              background: questionsPerPage === 0 ? 'rgba(99, 102, 241, 0.2)' : 'rgba(255, 255, 255, 0.04)',
+                              color: questionsPerPage === 0 ? '#818cf8' : 'var(--text-secondary)',
+                            }}
+                          >
+                            {questionsPerPage === 0 ? 'Paginate (15/part)' : `Show All (${filteredQuestions.length})`}
+                          </button>
+                        </div>
+                      )}
+                    </div>
+
+                    {/* Question List */}
+                    {(() => {
+                      const displayedQuestions = questionsPerPage > 0
+                        ? filteredQuestions.slice((questionCurrentPage - 1) * questionsPerPage, questionCurrentPage * questionsPerPage)
+                        : filteredQuestions;
+
+                      if (displayedQuestions.length === 0) {
+                        return (
+                          <div style={{ textAlign: 'center', padding: '40px 20px', color: 'var(--text-muted)' }}>
+                            No questions match &quot;{questionSearch}&quot;.
+                          </div>
+                        );
+                      }
+
+                      return displayedQuestions.map((q) => {
+                        const originalIdx = responsesModalPres.questions.findIndex((item) => item.id === q.id);
+                        const qResponses = responsesByQuestion[q.id] || [];
+                        const totalQ = qResponses.length;
+
+                        return (
+                          <div
+                            key={q.id}
+                            className="glass-panel"
+                            style={{
+                              padding: '20px 24px',
+                              borderRadius: '14px',
+                              border: '1px solid var(--border-subtle)',
+                            }}
+                          >
+                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '14px', flexWrap: 'wrap', gap: '8px' }}>
+                              <div>
+                                <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '4px' }}>
+                                  <span style={{ fontSize: '0.74rem', fontWeight: 700, color: 'var(--accent-primary)', textTransform: 'uppercase' }}>
+                                    Question {originalIdx >= 0 ? originalIdx + 1 : ''}
+                                  </span>
+                                  <span style={{ fontSize: '0.7rem', padding: '2px 6px', borderRadius: '4px', background: 'rgba(255, 255, 255, 0.06)', color: 'var(--text-secondary)' }}>
+                                    {q.type.replace('_', ' ').toUpperCase()}
+                                  </span>
+                                  {q.required && <span style={{ color: '#ef4444', fontWeight: 700 }}>*</span>}
+                                </div>
+                                <h4 style={{ fontSize: '1.05rem', fontWeight: 700, margin: 0, lineHeight: 1.35 }}>
+                                  {q.title}
+                                </h4>
                               </div>
-                              <h4 style={{ fontSize: '1.05rem', fontWeight: 700, margin: 0, lineHeight: 1.35 }}>
-                                {q.title}
-                              </h4>
+
+                              <span style={{ fontSize: '0.82rem', fontWeight: 600, color: 'var(--text-secondary)' }}>
+                                {totalQ} {totalQ === 1 ? 'response' : 'responses'}
+                              </span>
                             </div>
 
-                            <span style={{ fontSize: '0.82rem', fontWeight: 600, color: 'var(--text-secondary)' }}>
-                              {totalQ} {totalQ === 1 ? 'response' : 'responses'}
-                            </span>
-                          </div>
+                            {/* Charts / Visual Breakdown */}
 
-                          {/* Charts / Visual Breakdown */}
-
-                          {/* 1. MCQ & Multiple Choice */}
-                          {(q.type === 'mcq' || q.type === 'multiple_choice') && q.options && (
-                            <div style={{ display: 'flex', flexDirection: 'column', gap: '10px', marginTop: '12px' }}>
-                              {q.options.map((opt) => {
-                                let count = 0;
-                                qResponses.forEach((r: any) => {
-                                  if (q.type === 'mcq') {
-                                    if (r.value === opt.id) count++;
-                                  } else {
-                                    try {
-                                      const ids = JSON.parse(r.value);
-                                      if (Array.isArray(ids) && ids.includes(opt.id)) count++;
-                                    } catch {
+                            {/* 1. MCQ & Multiple Choice */}
+                            {(q.type === 'mcq' || q.type === 'multiple_choice') && q.options && (
+                              <div style={{ display: 'flex', flexDirection: 'column', gap: '10px', marginTop: '12px' }}>
+                                {q.options.map((opt) => {
+                                  let count = 0;
+                                  qResponses.forEach((r: any) => {
+                                    if (q.type === 'mcq') {
                                       if (r.value === opt.id) count++;
+                                    } else {
+                                      try {
+                                        const ids = JSON.parse(r.value);
+                                        if (Array.isArray(ids) && ids.includes(opt.id)) count++;
+                                      } catch {
+                                        if (r.value === opt.id) count++;
+                                      }
                                     }
-                                  }
-                                });
-                                const pct = totalQ > 0 ? Math.round((count / totalQ) * 100) : 0;
+                                  });
+                                  const pct = totalQ > 0 ? Math.round((count / totalQ) * 100) : 0;
 
-                                return (
-                                  <div key={opt.id} style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
-                                    <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.85rem' }}>
-                                      <span style={{ fontWeight: 500, color: 'var(--text-primary)' }}>{opt.text}</span>
-                                      <span style={{ color: 'var(--text-secondary)', fontWeight: 600 }}>
-                                        {count} ({pct}%)
-                                      </span>
-                                    </div>
-                                    <div
-                                      style={{
-                                        width: '100%',
-                                        height: '8px',
-                                        borderRadius: '9999px',
-                                        background: 'rgba(255, 255, 255, 0.08)',
-                                        overflow: 'hidden',
-                                      }}
-                                    >
+                                  return (
+                                    <div key={opt.id} style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                                      <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.85rem' }}>
+                                        <span style={{ fontWeight: 500, color: 'var(--text-primary)' }}>{opt.text}</span>
+                                        <span style={{ color: 'var(--text-secondary)', fontWeight: 600 }}>
+                                          {count} ({pct}%)
+                                        </span>
+                                      </div>
                                       <div
                                         style={{
-                                          width: `${pct}%`,
-                                          height: '100%',
+                                          width: '100%',
+                                          height: '8px',
                                           borderRadius: '9999px',
-                                          background: 'linear-gradient(90deg, #6366f1, #a855f7)',
-                                          transition: 'width 0.4s ease',
+                                          background: 'rgba(255, 255, 255, 0.08)',
+                                          overflow: 'hidden',
                                         }}
-                                      />
-                                    </div>
-                                  </div>
-                                );
-                              })}
-                            </div>
-                          )}
-
-                          {/* 2. Rating Scale */}
-                          {q.type === 'rating_scale' && (
-                            <div style={{ marginTop: '12px' }}>
-                              {(() => {
-                                const min = q.minRating || 1;
-                                const max = q.maxRating || 5;
-                                const counts: Record<number, number> = {};
-                                for (let i = min; i <= max; i++) counts[i] = 0;
-                                let sum = 0;
-                                qResponses.forEach((r: any) => {
-                                  const val = parseInt(r.value, 10);
-                                  if (!isNaN(val) && val >= min && val <= max) {
-                                    counts[val] = (counts[val] || 0) + 1;
-                                    sum += val;
-                                  }
-                                });
-                                const avg = totalQ > 0 ? (sum / totalQ).toFixed(1) : '0';
-
-                                return (
-                                  <div>
-                                    <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '14px' }}>
-                                      <span style={{ fontSize: '1.6rem', fontWeight: 800, color: '#f59e0b' }}>
-                                        ★ {avg}
-                                      </span>
-                                      <span style={{ fontSize: '0.85rem', color: 'var(--text-secondary)' }}>
-                                        Average Rating out of {max}
-                                      </span>
-                                    </div>
-
-                                    <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
-                                      {Object.entries(counts).map(([score, c]) => (
+                                      >
                                         <div
-                                          key={score}
                                           style={{
-                                            flex: 1,
-                                            minWidth: '50px',
-                                            padding: '8px',
-                                            borderRadius: '8px',
-                                            background: 'rgba(255, 255, 255, 0.04)',
-                                            border: '1px solid var(--border-subtle)',
-                                            textAlign: 'center',
+                                            width: `${pct}%`,
+                                            height: '100%',
+                                            borderRadius: '9999px',
+                                            background: 'linear-gradient(90deg, #6366f1, #a855f7)',
+                                            transition: 'width 0.4s ease',
                                           }}
-                                        >
-                                          <div style={{ fontSize: '0.8rem', fontWeight: 700, color: 'var(--text-muted)' }}>
-                                            {score}★
+                                        />
+                                      </div>
+                                    </div>
+                                  );
+                                })}
+                              </div>
+                            )}
+
+                            {/* 2. Rating Scale */}
+                            {q.type === 'rating_scale' && (
+                              <div style={{ marginTop: '12px' }}>
+                                {(() => {
+                                  const min = q.minRating || 1;
+                                  const max = q.maxRating || 5;
+                                  const counts: Record<number, number> = {};
+                                  for (let i = min; i <= max; i++) counts[i] = 0;
+                                  let sum = 0;
+                                  qResponses.forEach((r: any) => {
+                                    const val = parseInt(r.value, 10);
+                                    if (!isNaN(val) && val >= min && val <= max) {
+                                      counts[val] = (counts[val] || 0) + 1;
+                                      sum += val;
+                                    }
+                                  });
+                                  const avg = totalQ > 0 ? (sum / totalQ).toFixed(1) : '0';
+
+                                  return (
+                                    <div>
+                                      <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '14px' }}>
+                                        <span style={{ fontSize: '1.6rem', fontWeight: 800, color: '#f59e0b' }}>
+                                          ★ {avg}
+                                        </span>
+                                        <span style={{ fontSize: '0.85rem', color: 'var(--text-secondary)' }}>
+                                          Average Rating out of {max}
+                                        </span>
+                                      </div>
+
+                                      <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+                                        {Object.entries(counts).map(([score, c]) => (
+                                          <div
+                                            key={score}
+                                            style={{
+                                              flex: 1,
+                                              minWidth: '50px',
+                                              padding: '8px',
+                                              borderRadius: '8px',
+                                              background: 'rgba(255, 255, 255, 0.04)',
+                                              border: '1px solid var(--border-subtle)',
+                                              textAlign: 'center',
+                                            }}
+                                          >
+                                            <div style={{ fontSize: '0.8rem', fontWeight: 700, color: 'var(--text-muted)' }}>
+                                              {score}★
+                                            </div>
+                                            <div style={{ fontSize: '1.1rem', fontWeight: 800, color: 'var(--text-primary)' }}>
+                                              {c}
+                                            </div>
                                           </div>
-                                          <div style={{ fontSize: '1.1rem', fontWeight: 800, color: 'var(--text-primary)' }}>
-                                            {c}
-                                          </div>
-                                        </div>
-                                      ))}
+                                        ))}
+                                      </div>
+                                    </div>
+                                  );
+                                })()}
+                              </div>
+                            )}
+
+                            {/* 3. True / False */}
+                            {q.type === 'true_false' && (
+                              <div style={{ display: 'flex', gap: '16px', marginTop: '12px' }}>
+                                {(() => {
+                                  const trueCount = qResponses.filter((r: any) => r.value === 'true').length;
+                                  const falseCount = qResponses.filter((r: any) => r.value === 'false').length;
+                                  const truePct = totalQ > 0 ? Math.round((trueCount / totalQ) * 100) : 0;
+                                  const falsePct = totalQ > 0 ? Math.round((falseCount / totalQ) * 100) : 0;
+
+                                  return (
+                                    <div style={{ width: '100%' }}>
+                                      <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '6px', fontSize: '0.85rem' }}>
+                                        <span style={{ color: '#10b981', fontWeight: 700 }}>👍 True: {trueCount} ({truePct}%)</span>
+                                        <span style={{ color: '#ef4444', fontWeight: 700 }}>👎 False: {falseCount} ({falsePct}%)</span>
+                                      </div>
+                                      <div style={{ width: '100%', height: '10px', borderRadius: '9999px', display: 'flex', overflow: 'hidden' }}>
+                                        <div style={{ width: `${truePct}%`, background: '#10b981', transition: 'width 0.3s' }} />
+                                        <div style={{ width: `${falsePct}%`, background: '#ef4444', transition: 'width 0.3s' }} />
+                                      </div>
+                                    </div>
+                                  );
+                                })()}
+                              </div>
+                            )}
+
+                            {/* 4. Short / Long Answer Feedback */}
+                            {(q.type === 'short_answer' || q.type === 'long_answer') && (
+                              <div style={{ marginTop: '12px', display: 'flex', flexDirection: 'column', gap: '8px', maxHeight: '220px', overflowY: 'auto' }}>
+                                {qResponses.map((r: any) => (
+                                  <div
+                                    key={r.id}
+                                    style={{
+                                      padding: '10px 14px',
+                                      borderRadius: '8px',
+                                      background: 'rgba(255, 255, 255, 0.04)',
+                                      border: '1px solid var(--border-subtle)',
+                                      fontSize: '0.88rem',
+                                    }}
+                                  >
+                                    <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.74rem', color: 'var(--text-muted)', marginBottom: '4px' }}>
+                                      <span>{r.participantName || 'Anonymous'}</span>
+                                      <span>{new Date(r.createdAt).toLocaleTimeString()}</span>
+                                    </div>
+                                    <div style={{ color: 'var(--text-primary)', lineHeight: 1.45 }}>
+                                      {r.value}
                                     </div>
                                   </div>
-                                );
-                              })()}
-                            </div>
-                          )}
-
-                          {/* 3. True / False */}
-                          {q.type === 'true_false' && (
-                            <div style={{ display: 'flex', gap: '16px', marginTop: '12px' }}>
-                              {(() => {
-                                const trueCount = qResponses.filter((r: any) => r.value === 'true').length;
-                                const falseCount = qResponses.filter((r: any) => r.value === 'false').length;
-                                const truePct = totalQ > 0 ? Math.round((trueCount / totalQ) * 100) : 0;
-                                const falsePct = totalQ > 0 ? Math.round((falseCount / totalQ) * 100) : 0;
-
-                                return (
-                                  <div style={{ width: '100%' }}>
-                                    <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '6px', fontSize: '0.85rem' }}>
-                                      <span style={{ color: '#10b981', fontWeight: 700 }}>👍 True: {trueCount} ({truePct}%)</span>
-                                      <span style={{ color: '#ef4444', fontWeight: 700 }}>👎 False: {falseCount} ({falsePct}%)</span>
-                                    </div>
-                                    <div style={{ width: '100%', height: '10px', borderRadius: '9999px', display: 'flex', overflow: 'hidden' }}>
-                                      <div style={{ width: `${truePct}%`, background: '#10b981', transition: 'width 0.3s' }} />
-                                      <div style={{ width: `${falsePct}%`, background: '#ef4444', transition: 'width 0.3s' }} />
-                                    </div>
-                                  </div>
-                                );
-                              })()}
-                            </div>
-                          )}
-
-                          {/* 4. Short / Long Answer Feedback */}
-                          {(q.type === 'short_answer' || q.type === 'long_answer') && (
-                            <div style={{ marginTop: '12px', display: 'flex', flexDirection: 'column', gap: '8px', maxHeight: '220px', overflowY: 'auto' }}>
-                              {qResponses.map((r: any) => (
-                                <div
-                                  key={r.id}
-                                  style={{
-                                    padding: '10px 14px',
-                                    borderRadius: '8px',
-                                    background: 'rgba(255, 255, 255, 0.04)',
-                                    border: '1px solid var(--border-subtle)',
-                                    fontSize: '0.88rem',
-                                  }}
-                                >
-                                  <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.74rem', color: 'var(--text-muted)', marginBottom: '4px' }}>
-                                    <span>{r.participantName || 'Anonymous'}</span>
-                                    <span>{new Date(r.createdAt).toLocaleTimeString()}</span>
-                                  </div>
-                                  <div style={{ color: 'var(--text-primary)', lineHeight: 1.45 }}>
-                                    {r.value}
-                                  </div>
-                                </div>
-                              ))}
-                            </div>
-                          )}
-                        </div>
-                      );
-                    })}
+                                ))}
+                              </div>
+                            )}
+                          </div>
+                        );
+                      });
+                    })()}
                   </div>
                 ) : (
                   /* Submissions Grid (Google Sheets View) */
                   <div style={{ overflowX: 'auto' }}>
                     {(() => {
-                      // Group responses by participantId
-                      const userMap = new Map<string, any>();
-                      responsesData.responses.forEach((r: any) => {
-                        if (!userMap.has(r.participantId)) {
-                          userMap.set(r.participantId, {
-                            id: r.participantId,
-                            name: r.participantName || 'Anonymous',
-                            whatsapp: r.participantWhatsapp || 'N/A',
-                            email: r.participantEmail || 'N/A',
-                            submittedAt: r.createdAt,
-                            answers: {},
-                          });
-                        }
-                        userMap.get(r.participantId).answers[r.questionId] = r.value;
-                      });
-
-                      const rows = Array.from(userMap.values());
+                      const rows = userRows;
 
                       return (
                         <table

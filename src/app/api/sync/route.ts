@@ -215,16 +215,61 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ error: 'Missing room code' }, { status: 400 });
   }
 
+  const presId = searchParams.get('id');
   const isSurveyOnly = searchParams.get('survey_only') === 'true' || searchParams.get('survey_only') === '1';
 
-  // Fetch individual presentation
+  // Fetch individual presentation & responses
   if (isSupabaseConfigured && supabase) {
     try {
-      const { data: pData } = await supabase
-        .from('presentations')
-        .select('*')
-        .eq('code', code)
-        .maybeSingle();
+      const presPromise = presId
+        ? supabase.from('presentations').select('*').or(`id.eq.${presId},code.eq.${code}`).maybeSingle()
+        : supabase.from('presentations').select('*').eq('code', code).maybeSingle();
+
+      let pData: any = null;
+      let partData: any[] = [];
+      let respData: any[] = [];
+
+      if (isSurveyOnly) {
+        const { data } = await presPromise;
+        pData = data;
+      } else if (presId) {
+        // High-speed parallel execution: fetch presentation, participants, and responses concurrently!
+        const [pRes, partRes, respRes] = await Promise.all([
+          presPromise,
+          supabase
+            .from('participants')
+            .select('*')
+            .or(`presentation_id.eq.${presId},room_code.eq.${code}`)
+            .order('joined_at', { ascending: false }),
+          supabase
+            .from('responses')
+            .select('*')
+            .or(`presentation_id.eq.${presId},presentation_id.eq.${code}`)
+            .order('created_at', { ascending: false }),
+        ]);
+        pData = pRes.data;
+        partData = partRes.data || [];
+        respData = respRes.data || [];
+      } else {
+        const { data } = await presPromise;
+        pData = data;
+        if (pData) {
+          const [partRes, respRes] = await Promise.all([
+            supabase
+              .from('participants')
+              .select('*')
+              .or(`presentation_id.eq.${pData.id},room_code.eq.${code}`)
+              .order('joined_at', { ascending: false }),
+            supabase
+              .from('responses')
+              .select('*')
+              .or(`presentation_id.eq.${pData.id},presentation_id.eq.${code}`)
+              .order('created_at', { ascending: false }),
+          ]);
+          partData = partRes.data || [];
+          respData = respRes.data || [];
+        }
+      }
 
       if (pData) {
         const presentation: Presentation = {
@@ -252,21 +297,7 @@ export async function GET(req: NextRequest) {
           );
         }
 
-        // Fetch participants and responses concurrently in parallel
-        const [partRes, respRes] = await Promise.all([
-          supabase
-            .from('participants')
-            .select('*')
-            .eq('presentation_id', pData.id)
-            .order('joined_at', { ascending: false }),
-          supabase
-            .from('responses')
-            .select('*')
-            .eq('presentation_id', pData.id)
-            .order('created_at', { ascending: false }),
-        ]);
-
-        const responses: ResponseSubmission[] = (respRes.data || []).map((r: any) => ({
+        const responses: ResponseSubmission[] = respData.map((r: any) => ({
           id: r.id,
           presentationId: r.presentation_id,
           questionId: r.question_id,
@@ -278,7 +309,7 @@ export async function GET(req: NextRequest) {
           createdAt: r.created_at,
         }));
 
-        const participants: Participant[] = (partRes.data || []).map((p: any) => ({
+        const participants: Participant[] = partData.map((p: any) => ({
           id: p.id,
           presentationId: p.presentation_id,
           roomCode: p.room_code,
