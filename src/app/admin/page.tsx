@@ -96,9 +96,32 @@ export default function AdminDashboardPage() {
       if (res.ok) {
         const json = await res.json();
         if (json?.presentations && json.presentations.length > 0) {
-          setPresentations(json.presentations);
+          const listWithBackups = json.presentations.map((p: Presentation) => {
+            if (typeof window !== 'undefined') {
+              try {
+                const localBackup = localStorage.getItem(`audiencemeter_survey_submissions_${p.code}`);
+                if (localBackup) {
+                  const entries = JSON.parse(localBackup);
+                  if (Array.isArray(entries) && entries.length > 0) {
+                    const localSubCount = entries.length;
+                    const localRespCount = entries.reduce(
+                      (acc: number, e: any) => acc + (Array.isArray(e.submissions) ? e.submissions.length : 0),
+                      0
+                    );
+                    return {
+                      ...p,
+                      participantCount: Math.max(p.participantCount || 0, localSubCount),
+                      responseCount: Math.max(p.responseCount || 0, localRespCount),
+                    };
+                  }
+                }
+              } catch {}
+            }
+            return p;
+          });
+          setPresentations(listWithBackups);
           try {
-            localStorage.setItem('audiencemeter_cached_presentations', JSON.stringify(json.presentations));
+            localStorage.setItem('audiencemeter_cached_presentations', JSON.stringify(listWithBackups));
           } catch {}
         }
       }
@@ -180,17 +203,44 @@ export default function AdminDashboardPage() {
         const freshResponses = data.responses || [];
         const freshParticipants = data.participants || [];
 
+        // Merge local backups if any exist
+        let mergedResponses = [...freshResponses];
+        let mergedParticipants = [...freshParticipants];
+
+        if (typeof window !== 'undefined') {
+          try {
+            const localBackup = localStorage.getItem(`audiencemeter_survey_submissions_${pres.code}`);
+            if (localBackup) {
+              const entries = JSON.parse(localBackup);
+              if (Array.isArray(entries)) {
+                for (const entry of entries) {
+                  if (entry.participant && !mergedParticipants.some((p: any) => p.id === entry.participant.id)) {
+                    mergedParticipants.push(entry.participant);
+                  }
+                  if (Array.isArray(entry.submissions)) {
+                    for (const s of entry.submissions) {
+                      if (!mergedResponses.some((r: any) => r.id === s.id)) {
+                        mergedResponses.push(s);
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          } catch {}
+        }
+
         // Save to in-memory client cache
         responsesCache.current[pres.code] = {
-          responses: freshResponses,
-          participants: freshParticipants,
+          responses: mergedResponses,
+          participants: mergedParticipants,
           timestamp: Date.now(),
         };
 
         setResponsesData({
           loading: false,
-          responses: freshResponses,
-          participants: freshParticipants,
+          responses: mergedResponses,
+          participants: mergedParticipants,
         });
       } else if (!cached) {
         setResponsesData({ loading: false, responses: [], participants: [] });
@@ -480,6 +530,27 @@ export default function AdminDashboardPage() {
                   >
                     ● Supabase Realtime Connected
                   </span>
+                ) : healthStatus.status === 'database_error' ? (
+                  <a
+                    href="https://supabase.com/dashboard"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    style={{
+                      display: 'inline-flex',
+                      alignItems: 'center',
+                      gap: '6px',
+                      color: '#ef4444',
+                      background: 'rgba(239, 68, 68, 0.1)',
+                      border: '1px solid rgba(239, 68, 68, 0.3)',
+                      padding: '3px 10px',
+                      borderRadius: '9999px',
+                      fontWeight: 600,
+                      textDecoration: 'none',
+                    }}
+                    title={`Supabase: ${healthStatus.error || 'Connection failed'} (Host: ${healthStatus.host || 'unknown'}). Click to restore in Supabase Dashboard.`}
+                  >
+                    ⚠️ Supabase Project Paused (Click to Unpause in Dashboard)
+                  </a>
                 ) : (
                   <span
                     style={{
