@@ -1,0 +1,17 @@
+name: Supabase & Vercel Keep-Alive
+
+on:
+  schedule:
+    # Runs every 3 days at 06:00 UTC (well within the 7-day Supabase inactivity window)
+    - cron: '0 6 */3 * *'
+  workflow_dispatch: # Allows manual trigger from GitHub Actions UI
+
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Ping AudienceMeter Health API
+        run: |
+          echo "Pinging health endpoint to reset Supabase 7-day inactivity timer..."
+          curl -s -f -m 30 "https://audimeter.vercel.app/api/health" || true
+          echo "Keep-alive ping completed."
