@@ -91,7 +91,8 @@ export async function GET(
         const { data: partData } = await supabase
           .from('participants')
           .select('*')
-          .eq('presentation_id', presData.id);
+          .eq('presentation_id', presData.id)
+          .eq('room_code', code);
 
         if (partData) {
           participants = partData.map((p: any) => ({
@@ -142,13 +143,16 @@ export async function GET(
   >();
 
   participants.forEach((p) => {
-    respondentsMap.set(p.id, {
-      id: p.id,
-      name: `${p.firstName} ${p.lastName}`.trim() || 'Anonymous',
-      whatsapp: p.whatsapp || '',
-      email: p.email || '',
-      submittedAt: p.joinedAt,
-    });
+    const hasResponse = responses.some((r) => r.participantId === p.id);
+    if (presentation.type !== 'survey' || hasResponse) {
+      respondentsMap.set(p.id, {
+        id: p.id,
+        name: `${p.firstName} ${p.lastName}`.trim() || 'Anonymous',
+        whatsapp: p.whatsapp || '',
+        email: p.email || '',
+        submittedAt: p.joinedAt,
+      });
+    }
   });
 
   responses.forEach((r) => {
@@ -261,7 +265,18 @@ export async function GET(
   const workbook = XLSX.utils.book_new();
 
   // Primary Sheet: Form Responses Grid
-  const wsGrid = XLSX.utils.json_to_sheet(gridSheetData);
+  const gridHeaders = [
+    'Submission #',
+    'Timestamp',
+    'Respondent Name',
+    'WhatsApp / Phone',
+    'Email Address',
+    ...presentation.questions.map((q, idx) => `Q${idx + 1}: ${q.title}`),
+  ];
+
+  const wsGrid = gridSheetData.length > 0
+    ? XLSX.utils.json_to_sheet(gridSheetData)
+    : XLSX.utils.aoa_to_sheet([gridHeaders]);
   const gridColWidths = [
     { wch: 14 }, // Submission #
     { wch: 22 }, // Timestamp

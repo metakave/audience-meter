@@ -166,7 +166,9 @@ export async function GET(req: NextRequest) {
             }
           });
 
-          const formatted: Presentation[] = presList.map((p: any) => {
+          const formatted: Presentation[] = presList
+            .filter((p: any) => p.code !== '000000' && p.id !== 'archived-sessions')
+            .map((p: any) => {
             const partSubmissions = Math.max(
               partIdMap[p.id]?.size || 0,
               partIdMap[p.code]?.size || 0
@@ -767,11 +769,35 @@ export async function POST(req: NextRequest) {
           const targetIds = pres?.id ? (pres.id === code ? [code] : [pres.id, code]) : [code];
 
           const delResp = await supabase.from('responses').delete().in('presentation_id', targetIds);
+          const delRespCode = await supabase.from('responses').delete().eq('room_code', code);
           const delPart = await supabase.from('participants').delete().in('presentation_id', targetIds);
           const delPartCode = await supabase.from('participants').delete().eq('room_code', code);
 
+          // In case Supabase participants table has RLS policy blocking direct DELETE:
+          // 1. Ensure an archived placeholder presentation exists
+          await supabase.from('presentations').upsert({
+            id: 'archived-sessions',
+            title: 'Archived Submissions',
+            code: '000000',
+            type: 'presentation',
+            questions: [],
+            is_live: false,
+          });
+
+          // 2. Disassociate all participants so they never count towards this room or presentation
+          await supabase
+            .from('participants')
+            .update({ presentation_id: 'archived-sessions', room_code: '000000' })
+            .in('presentation_id', targetIds);
+
+          await supabase
+            .from('participants')
+            .update({ presentation_id: 'archived-sessions', room_code: '000000' })
+            .eq('room_code', code);
+
           debugError = {
             delRespError: delResp.error,
+            delRespCodeError: delRespCode.error,
             delPartError: delPart.error,
             delPartCodeError: delPartCode.error,
           };
