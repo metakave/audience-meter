@@ -29,11 +29,19 @@ export async function GET() {
     const { data, error } = await supabase.from('presentations').select('id, code').limit(5);
 
     if (error) {
+      let host = 'invalid-url';
+      try {
+        host = new URL(url).host;
+      } catch {}
       return NextResponse.json({
         status: 'database_error',
-        message: 'Connected to Supabase, but encountered an error querying the tables.',
+        message: 'Connected to Supabase client, but encountered an error querying the tables.',
         error: error.message,
-        tip: 'Make sure you ran the SQL script from supabase-schema.sql in the Supabase SQL Editor.',
+        details: (error as any).details || (error as any).cause || null,
+        hint: (error as any).hint || null,
+        code: (error as any).code || null,
+        host,
+        tip: 'Make sure the Supabase project is active (not paused) and the URL is correct.',
       });
     }
 
