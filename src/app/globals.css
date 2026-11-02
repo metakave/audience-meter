@@ -322,6 +322,32 @@ input, textarea, select {
   }
 }
 
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@keyframes pulseGlow {
+  0%, 100% {
+    opacity: 0.45;
+    transform: scale(0.96);
+  }
+  50% {
+    opacity: 0.85;
+    transform: scale(1.08);
+  }
+}
+
+@keyframes shimmerSlide {
+  0% {
+    left: 0%;
+  }
+  100% {
+    left: 55%;
+  }
+}
+
 /* Floating Host Toolbar */
 .host-toolbar {
   position: fixed;

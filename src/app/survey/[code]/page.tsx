@@ -77,6 +77,7 @@ function SurveyFormContent({ params }: { params: Promise<{ code: string }> }) {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [isSubmitted, setIsSubmitted] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
+  const [showConfirmModal, setShowConfirmModal] = useState(false);
 
   // Pagination state: 15 questions per page
   const QUESTIONS_PER_PAGE = 15;
@@ -92,6 +93,16 @@ function SurveyFormContent({ params }: { params: Promise<{ code: string }> }) {
   const isFirstPage = currentPage === 1;
   const isLastPage = currentPage === totalPages;
   const progressPercent = totalPages > 1 ? Math.round((currentPage / totalPages) * 100) : 100;
+
+  // Total answered questions count
+  const answeredCount = survey
+    ? survey.questions.filter((q) => {
+        const val = answers[q.id];
+        if (val === undefined || val === null || val === '') return false;
+        if (Array.isArray(val) && val.length === 0) return false;
+        return true;
+      }).length
+    : 0;
 
   // 1. Restore saved respondent info & background revalidate survey
   useEffect(() => {
@@ -283,12 +294,21 @@ function SurveyFormContent({ params }: { params: Promise<{ code: string }> }) {
     return true;
   };
 
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
+  // Open confirmation modal after validating all pages
+  const handleRequestSubmit = (e?: React.FormEvent) => {
+    if (e) e.preventDefault();
     if (!survey) return;
 
     if (!validateForm()) return;
 
+    setShowConfirmModal(true);
+  };
+
+  // Final confirmed survey execution
+  const handleExecuteSubmit = async () => {
+    if (!survey) return;
+
+    setShowConfirmModal(false);
     setIsSubmitting(true);
     setSubmitError(null);
 
@@ -613,6 +633,400 @@ function SurveyFormContent({ params }: { params: Promise<{ code: string }> }) {
   // Main Google Forms-Style Survey View
   return (
     <div style={{ minHeight: '100vh', display: 'flex', flexDirection: 'column' }}>
+      {/* 1. Confirmation Modal Popup */}
+      {showConfirmModal && (
+        <div
+          role="dialog"
+          aria-modal="true"
+          style={{
+            position: 'fixed',
+            inset: 0,
+            zIndex: 9000,
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            padding: '20px',
+            background: 'rgba(0, 0, 0, 0.72)',
+            backdropFilter: 'blur(10px)',
+            WebkitBackdropFilter: 'blur(10px)',
+            animation: 'popIn 0.2s cubic-bezier(0.16, 1, 0.3, 1)',
+          }}
+          onClick={(e) => {
+            if (e.target === e.currentTarget) setShowConfirmModal(false);
+          }}
+        >
+          <div
+            className="glass-panel"
+            style={{
+              maxWidth: '520px',
+              width: '100%',
+              borderRadius: '24px',
+              padding: '32px 28px',
+              border: '1px solid var(--border-strong)',
+              boxShadow: '0 25px 60px -15px rgba(0, 0, 0, 0.7), 0 0 35px rgba(99, 102, 241, 0.25)',
+              background: 'var(--bg-card, #131722)',
+              position: 'relative',
+            }}
+          >
+            {/* Modal Header */}
+            <div style={{ display: 'flex', alignItems: 'center', gap: '14px', marginBottom: '18px' }}>
+              <div
+                style={{
+                  width: '46px',
+                  height: '46px',
+                  borderRadius: '14px',
+                  background: 'linear-gradient(135deg, rgba(99, 102, 241, 0.2), rgba(168, 85, 247, 0.2))',
+                  border: '1px solid rgba(99, 102, 241, 0.4)',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  color: '#818cf8',
+                  flexShrink: 0,
+                }}
+              >
+                <HelpCircle size={24} />
+              </div>
+              <div>
+                <h3 style={{ fontSize: '1.3rem', fontWeight: 800, margin: 0, letterSpacing: '-0.3px' }}>
+                  Ready to Submit?
+                </h3>
+                <p style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', margin: '3px 0 0' }}>
+                  Please confirm your feedback submission
+                </p>
+              </div>
+            </div>
+
+            {/* Survey Title */}
+            <div
+              style={{
+                fontSize: '0.94rem',
+                fontWeight: 600,
+                color: 'var(--text-primary)',
+                marginBottom: '16px',
+                padding: '12px 14px',
+                borderRadius: '12px',
+                background: 'rgba(255, 255, 255, 0.04)',
+                border: '1px solid var(--border-subtle)',
+                overflow: 'hidden',
+                textOverflow: 'ellipsis',
+                whiteSpace: 'nowrap',
+              }}
+            >
+              📄 {survey.title}
+            </div>
+
+            {/* Summary Information Cards */}
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '12px', marginBottom: '20px' }}>
+              {/* Question Count & Completion */}
+              <div
+                style={{
+                  display: 'flex',
+                  justifyContent: 'space-between',
+                  alignItems: 'center',
+                  padding: '12px 16px',
+                  borderRadius: '12px',
+                  background: 'rgba(255, 255, 255, 0.03)',
+                  border: '1px solid var(--border-subtle)',
+                }}
+              >
+                <span style={{ fontSize: '0.88rem', color: 'var(--text-secondary)' }}>
+                  Questions Answered
+                </span>
+                <span
+                  style={{
+                    fontSize: '0.9rem',
+                    fontWeight: 700,
+                    color: answeredCount === totalQuestions ? '#10b981' : 'var(--text-primary)',
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '6px',
+                  }}
+                >
+                  {answeredCount} of {totalQuestions}
+                  <span
+                    style={{
+                      fontSize: '0.78rem',
+                      padding: '2px 8px',
+                      borderRadius: '999px',
+                      background: answeredCount === totalQuestions ? 'rgba(16, 185, 129, 0.15)' : 'rgba(99, 102, 241, 0.15)',
+                      color: answeredCount === totalQuestions ? '#10b981' : '#818cf8',
+                    }}
+                  >
+                    {Math.round((answeredCount / (totalQuestions || 1)) * 100)}%
+                  </span>
+                </span>
+              </div>
+
+              {/* Respondent Identity */}
+              <div
+                style={{
+                  padding: '12px 16px',
+                  borderRadius: '12px',
+                  background: 'rgba(255, 255, 255, 0.03)',
+                  border: '1px solid var(--border-subtle)',
+                  fontSize: '0.88rem',
+                }}
+              >
+                <div style={{ color: 'var(--text-secondary)', marginBottom: '4px', fontSize: '0.8rem' }}>
+                  Submitting As
+                </div>
+                {isAnonymous ? (
+                  <div style={{ fontWeight: 600, color: 'var(--text-primary)', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                    <ShieldCheck size={16} color="#10b981" /> Anonymous Respondent (identity hidden)
+                  </div>
+                ) : (
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '3px' }}>
+                    <div style={{ fontWeight: 600, color: 'var(--text-primary)' }}>
+                      {fullName.trim() || 'Anonymous Participant'}
+                    </div>
+                    {(whatsapp.trim() || email.trim()) && (
+                      <div style={{ fontSize: '0.8rem', color: 'var(--text-secondary)' }}>
+                        {[whatsapp.trim(), email.trim()].filter(Boolean).join(' • ')}
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+
+              {/* Optional unanswered reminder */}
+              {answeredCount < totalQuestions && (
+                <div
+                  style={{
+                    fontSize: '0.82rem',
+                    color: 'var(--text-secondary)',
+                    padding: '8px 12px',
+                    borderRadius: '8px',
+                    background: 'rgba(255, 255, 255, 0.02)',
+                    border: '1px dashed var(--border-subtle)',
+                  }}
+                >
+                  ℹ️ You have {totalQuestions - answeredCount} optional question(s) left blank. You can still submit now or review them.
+                </div>
+              )}
+            </div>
+
+            {/* Advisory Warning */}
+            <div
+              style={{
+                display: 'flex',
+                alignItems: 'flex-start',
+                gap: '10px',
+                padding: '12px 14px',
+                borderRadius: '12px',
+                background: 'rgba(234, 179, 8, 0.08)',
+                border: '1px solid rgba(234, 179, 8, 0.25)',
+                marginBottom: '24px',
+                fontSize: '0.82rem',
+                color: '#fbbf24',
+                lineHeight: 1.45,
+              }}
+            >
+              <AlertCircle size={16} style={{ flexShrink: 0, marginTop: '2px' }} />
+              <div>
+                <strong>Important:</strong> Answers cannot be edited after submission. Please ensure all your answers are final before proceeding.
+              </div>
+            </div>
+
+            {/* Modal Action Buttons */}
+            <div style={{ display: 'flex', gap: '12px', justifyContent: 'flex-end' }}>
+              <button
+                type="button"
+                onClick={() => setShowConfirmModal(false)}
+                className="btn-secondary"
+                style={{
+                  padding: '11px 20px',
+                  fontSize: '0.92rem',
+                  fontWeight: 600,
+                  cursor: 'pointer',
+                }}
+              >
+                Review Answers
+              </button>
+              <button
+                type="button"
+                onClick={handleExecuteSubmit}
+                className="btn-primary"
+                style={{
+                  padding: '11px 24px',
+                  fontSize: '0.92rem',
+                  fontWeight: 700,
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  gap: '8px',
+                  cursor: 'pointer',
+                  boxShadow: '0 4px 16px var(--accent-glow)',
+                }}
+              >
+                <Send size={16} />
+                <span>Confirm & Submit</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* 2. Full-Screen Blurred Submission In-Progress Overlay */}
+      {isSubmitting && (
+        <div
+          role="status"
+          aria-live="polite"
+          style={{
+            position: 'fixed',
+            inset: 0,
+            zIndex: 9999,
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            padding: '24px',
+            backgroundColor: 'rgba(8, 12, 24, 0.82)',
+            backdropFilter: 'blur(16px)',
+            WebkitBackdropFilter: 'blur(16px)',
+          }}
+        >
+          <div
+            className="glass-panel"
+            style={{
+              maxWidth: '460px',
+              width: '100%',
+              padding: '44px 32px 36px',
+              textAlign: 'center',
+              borderRadius: '24px',
+              border: '1px solid rgba(99, 102, 241, 0.35)',
+              boxShadow: '0 25px 70px rgba(0, 0, 0, 0.7), 0 0 45px rgba(99, 102, 241, 0.25)',
+              background: 'var(--bg-card, #131722)',
+            }}
+          >
+            {/* Glowing animated spinner */}
+            <div style={{ position: 'relative', width: '76px', height: '76px', margin: '0 auto 24px' }}>
+              {/* Outer pulsing glow */}
+              <div
+                style={{
+                  position: 'absolute',
+                  inset: 0,
+                  borderRadius: '50%',
+                  background: 'radial-gradient(circle, rgba(99, 102, 241, 0.45) 0%, rgba(168, 85, 247, 0) 70%)',
+                  animation: 'pulseGlow 1.8s ease-in-out infinite',
+                }}
+              />
+              {/* Rotating spinner ring */}
+              <div
+                style={{
+                  width: '76px',
+                  height: '76px',
+                  borderRadius: '50%',
+                  border: '4px solid rgba(99, 102, 241, 0.18)',
+                  borderTopColor: '#6366f1',
+                  borderRightColor: '#a855f7',
+                  animation: 'spin 0.9s cubic-bezier(0.5, 0.1, 0.2, 1) infinite',
+                }}
+              />
+              <div
+                style={{
+                  position: 'absolute',
+                  inset: 0,
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  color: '#818cf8',
+                }}
+              >
+                <Send size={24} style={{ opacity: 0.9 }} />
+              </div>
+            </div>
+
+            <h3
+              style={{
+                fontSize: '1.4rem',
+                fontWeight: 800,
+                color: 'var(--text-primary)',
+                marginBottom: '8px',
+                letterSpacing: '-0.3px',
+              }}
+            >
+              Submitting Feedback...
+            </h3>
+
+            {/* Pill badge */}
+            <div
+              style={{
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: '8px',
+                padding: '6px 14px',
+                borderRadius: '999px',
+                background: 'rgba(99, 102, 241, 0.14)',
+                border: '1px solid rgba(99, 102, 241, 0.3)',
+                color: '#a5b4fc',
+                fontSize: '0.85rem',
+                fontWeight: 600,
+                marginBottom: '16px',
+              }}
+            >
+              <Clock size={14} />
+              <span>Please Wait a Few Seconds</span>
+            </div>
+
+            <p
+              style={{
+                color: 'var(--text-secondary)',
+                fontSize: '0.92rem',
+                lineHeight: 1.6,
+                marginBottom: '22px',
+                maxWidth: '380px',
+                margin: '0 auto 22px',
+              }}
+            >
+              Your feedback is being securely saved to the database. We will confirm as soon as it is recorded.
+            </p>
+
+            {/* Shimmering animated progress bar */}
+            <div
+              style={{
+                width: '100%',
+                height: '5px',
+                borderRadius: '999px',
+                background: 'rgba(255, 255, 255, 0.08)',
+                overflow: 'hidden',
+                position: 'relative',
+                marginBottom: '20px',
+              }}
+            >
+              <div
+                style={{
+                  position: 'absolute',
+                  top: 0,
+                  bottom: 0,
+                  left: 0,
+                  width: '45%',
+                  borderRadius: '999px',
+                  background: 'linear-gradient(90deg, #6366f1, #a855f7)',
+                  animation: 'shimmerSlide 1.5s ease-in-out infinite alternate',
+                }}
+              />
+            </div>
+
+            {/* Warning advisory */}
+            <div
+              style={{
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: '8px',
+                padding: '8px 14px',
+                borderRadius: '10px',
+                background: 'rgba(234, 179, 8, 0.1)',
+                border: '1px solid rgba(234, 179, 8, 0.25)',
+                color: '#facc15',
+                fontSize: '0.8rem',
+                fontWeight: 500,
+              }}
+            >
+              <AlertCircle size={14} />
+              <span>Please do not close or reload this page</span>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Top Navbar */}
       <header
         style={{
@@ -674,7 +1088,7 @@ function SurveyFormContent({ params }: { params: Promise<{ code: string }> }) {
 
       {/* Main Container */}
       <main style={{ flex: 1, padding: '36px 16px 64px', maxWidth: '760px', margin: '0 auto', width: '100%' }}>
-        <form onSubmit={handleSubmit} noValidate>
+        <form onSubmit={handleRequestSubmit} noValidate>
           {/* Survey Header Card (Google Forms Banner Card) */}
           <div
             className="glass-panel"
