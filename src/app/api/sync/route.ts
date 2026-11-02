@@ -176,6 +176,8 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ error: 'Missing room code' }, { status: 400 });
   }
 
+  const isSurveyOnly = searchParams.get('survey_only') === 'true' || searchParams.get('survey_only') === '1';
+
   // Fetch individual presentation
   if (isSupabaseConfigured && supabase) {
     try {
@@ -183,21 +185,9 @@ export async function GET(req: NextRequest) {
         .from('presentations')
         .select('*')
         .eq('code', code)
-        .single();
+        .maybeSingle();
 
       if (pData) {
-        const { data: partData } = await supabase
-          .from('participants')
-          .select('*')
-          .eq('presentation_id', pData.id)
-          .order('joined_at', { ascending: false });
-
-        const { data: respData } = await supabase
-          .from('responses')
-          .select('*')
-          .eq('presentation_id', pData.id)
-          .order('created_at', { ascending: false });
-
         const presentation: Presentation = {
           id: pData.id,
           title: pData.title,
@@ -215,7 +205,29 @@ export async function GET(req: NextRequest) {
           updatedAt: pData.updated_at,
         };
 
-        const responses: ResponseSubmission[] = (respData || []).map((r: any) => ({
+        // For survey respondents, return presentation immediately without waiting for responses/participants
+        if (isSurveyOnly) {
+          return NextResponse.json(
+            { success: true, presentation },
+            { headers: { 'Cache-Control': 'public, s-maxage=4, stale-while-revalidate=15' } }
+          );
+        }
+
+        // Fetch participants and responses concurrently in parallel
+        const [partRes, respRes] = await Promise.all([
+          supabase
+            .from('participants')
+            .select('*')
+            .eq('presentation_id', pData.id)
+            .order('joined_at', { ascending: false }),
+          supabase
+            .from('responses')
+            .select('*')
+            .eq('presentation_id', pData.id)
+            .order('created_at', { ascending: false }),
+        ]);
+
+        const responses: ResponseSubmission[] = (respRes.data || []).map((r: any) => ({
           id: r.id,
           presentationId: r.presentation_id,
           questionId: r.question_id,
@@ -227,7 +239,7 @@ export async function GET(req: NextRequest) {
           createdAt: r.created_at,
         }));
 
-        const participants: Participant[] = (partData || []).map((p: any) => ({
+        const participants: Participant[] = (partRes.data || []).map((p: any) => ({
           id: p.id,
           presentationId: p.presentation_id,
           roomCode: p.room_code,
@@ -246,13 +258,16 @@ export async function GET(req: NextRequest) {
         const finalResponses = responses.length > 0 ? responses : storeResponses;
         const finalParticipants = participants.length > 0 ? participants : storeParticipants;
 
-        return NextResponse.json({
-          success: true,
-          presentation,
-          participantCount: Math.max(finalParticipants.length, storeParticipants.length),
-          participants: finalParticipants,
-          responses: finalResponses,
-        });
+        return NextResponse.json(
+          {
+            success: true,
+            presentation,
+            participantCount: Math.max(finalParticipants.length, storeParticipants.length),
+            participants: finalParticipants,
+            responses: finalResponses,
+          },
+          { headers: { 'Cache-Control': 'public, s-maxage=2, stale-while-revalidate=5' } }
+        );
       } else {
         const store = getStoreData();
         const wasDeleted = store.deletedCodes?.includes(code);
@@ -277,12 +292,16 @@ export async function GET(req: NextRequest) {
               console.warn('Auto-seed presentation into Supabase failed:', e);
             }
 
-            return NextResponse.json({
-              success: true,
-              presentation: defaultPres,
-              participantCount: 0,
-              responses: [],
-            });
+            return NextResponse.json(
+              {
+                success: true,
+                presentation: defaultPres,
+                participantCount: 0,
+                participants: [],
+                responses: [],
+              },
+              { headers: { 'Cache-Control': 'public, s-maxage=5, stale-while-revalidate=15' } }
+            );
           }
         }
       }
@@ -301,16 +320,26 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ error: 'Presentation not found' }, { status: 404 });
   }
 
+  if (isSurveyOnly) {
+    return NextResponse.json(
+      { success: true, presentation },
+      { headers: { 'Cache-Control': 'public, s-maxage=4, stale-while-revalidate=15' } }
+    );
+  }
+
   const participants = store.participants[code] || [];
   const responses = store.responses[code] || [];
 
-  return NextResponse.json({
-    success: true,
-    presentation,
-    participantCount: participants.length,
-    participants,
-    responses,
-  });
+  return NextResponse.json(
+    {
+      success: true,
+      presentation,
+      participantCount: participants.length,
+      participants,
+      responses,
+    },
+    { headers: { 'Cache-Control': 'public, s-maxage=2, stale-while-revalidate=5' } }
+  );
 }
 
 export async function POST(req: NextRequest) {

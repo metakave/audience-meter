@@ -1,5 +1,6 @@
 import { Presentation, Participant, ResponseSubmission, AggregatedResults, Question } from '@/types';
 import { getSupabase, isSupabaseConfigured } from './supabase';
+import { DEFAULT_PRESENTATIONS } from './default-data';
 
 const LOCAL_STORAGE_KEY_PREFIX = 'audiencemeter_';
 
@@ -21,9 +22,70 @@ export function saveLocalParticipant(profile: { firstName: string; lastName: str
 }
 
 /**
- * Fetch presentation details by 6-digit room code
+ * Fetch presentation details by 6-digit room code with fast memory & local cache fallback
  */
 export async function fetchPresentation(code: string): Promise<Presentation | null> {
+  // 1. Fast in-memory check for default seeded presentations (e.g. SSG HR assessment)
+  const defaultMatch = DEFAULT_PRESENTATIONS.find((dp) => dp.code === code);
+
+  // 2. Client-side instant localStorage cache check
+  if (typeof window !== 'undefined') {
+    try {
+      const cached = localStorage.getItem(`audiencemeter_survey_${code}`);
+      if (cached) {
+        const parsed = JSON.parse(cached);
+        if (parsed?.id && Array.isArray(parsed?.questions) && parsed.questions.length > 0) {
+          // Revalidate in background without blocking
+          fetch(`/api/sync?code=${encodeURIComponent(code)}&survey_only=true`)
+            .then((r) => (r.ok ? r.json() : null))
+            .then((data) => {
+              if (data?.presentation) {
+                try {
+                  localStorage.setItem(`audiencemeter_survey_${code}`, JSON.stringify(data.presentation));
+                } catch {}
+              }
+            })
+            .catch(() => {});
+          return parsed;
+        }
+      }
+    } catch {}
+
+    if (defaultMatch) {
+      // Revalidate in background
+      fetch(`/api/sync?code=${encodeURIComponent(code)}&survey_only=true`)
+        .then((r) => (r.ok ? r.json() : null))
+        .then((data) => {
+          if (data?.presentation) {
+            try {
+              localStorage.setItem(`audiencemeter_survey_${code}`, JSON.stringify(data.presentation));
+            } catch {}
+          }
+        })
+        .catch(() => {});
+      return defaultMatch;
+    }
+  }
+
+  // 3. Fast sync API call with survey_only=true (skips fetching unnecessary participant/response matrices)
+  try {
+    const res = await fetch(`/api/sync?code=${encodeURIComponent(code)}&survey_only=true`);
+    if (res.ok) {
+      const json = await res.json();
+      if (json.presentation) {
+        if (typeof window !== 'undefined') {
+          try {
+            localStorage.setItem(`audiencemeter_survey_${code}`, JSON.stringify(json.presentation));
+          } catch {}
+        }
+        return json.presentation;
+      }
+    }
+  } catch (err) {
+    console.error('API sync fetch error in fetchPresentation:', err);
+  }
+
+  // 4. Supabase direct lookup fallback if sync API was unreachable
   const supabase = getSupabase();
   if (isSupabaseConfigured && supabase) {
     try {
@@ -31,9 +93,9 @@ export async function fetchPresentation(code: string): Promise<Presentation | nu
         .from('presentations')
         .select('*')
         .eq('code', code)
-        .single();
+        .maybeSingle();
       if (data && !error) {
-        return {
+        const presentation: Presentation = {
           id: data.id,
           title: data.title,
           code: data.code,
@@ -49,23 +111,19 @@ export async function fetchPresentation(code: string): Promise<Presentation | nu
           createdAt: data.created_at,
           updatedAt: data.updated_at,
         };
+        if (typeof window !== 'undefined') {
+          try {
+            localStorage.setItem(`audiencemeter_survey_${code}`, JSON.stringify(presentation));
+          } catch {}
+        }
+        return presentation;
       }
     } catch (err) {
-      console.warn('Supabase fetch failed, falling back to sync API:', err);
+      console.warn('Supabase fetch failed:', err);
     }
   }
 
-  // Fallback to API sync
-  try {
-    const res = await fetch(`/api/sync?code=${encodeURIComponent(code)}`);
-    if (res.ok) {
-      const json = await res.json();
-      return json.presentation || null;
-    }
-  } catch (err) {
-    console.error('API sync fetch error:', err);
-  }
-  return null;
+  return defaultMatch || null;
 }
 
 /**

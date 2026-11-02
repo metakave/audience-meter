@@ -28,12 +28,40 @@ import {
   ArrowRight,
 } from 'lucide-react';
 import ThemeToggle from '@/components/ThemeToggle';
+import { DEFAULT_PRESENTATIONS } from '@/lib/default-data';
 
 function SurveyFormContent({ params }: { params: Promise<{ code: string }> }) {
   const { code } = use(params);
 
-  const [loading, setLoading] = useState(true);
-  const [survey, setSurvey] = useState<Presentation | null>(null);
+  // Instant SWR state: check default presentations and localStorage before hitting the network
+  const [survey, setSurvey] = useState<Presentation | null>(() => {
+    const defaultPres = DEFAULT_PRESENTATIONS.find((p) => p.code === code);
+    if (defaultPres) return defaultPres;
+
+    if (typeof window !== 'undefined') {
+      try {
+        const cached = localStorage.getItem(`audiencemeter_survey_${code}`);
+        if (cached) {
+          const parsed = JSON.parse(cached);
+          if (parsed?.id && Array.isArray(parsed?.questions) && parsed.questions.length > 0) return parsed;
+        }
+      } catch {}
+    }
+    return null;
+  });
+
+  const [loading, setLoading] = useState<boolean>(() => {
+    const defaultPres = DEFAULT_PRESENTATIONS.find((p) => p.code === code);
+    if (defaultPres) return false;
+
+    if (typeof window !== 'undefined') {
+      try {
+        const cached = localStorage.getItem(`audiencemeter_survey_${code}`);
+        if (cached) return false;
+      } catch {}
+    }
+    return true;
+  });
 
   // Respondent info state
   const [fullName, setFullName] = useState('');
@@ -51,24 +79,32 @@ function SurveyFormContent({ params }: { params: Promise<{ code: string }> }) {
 
   const questionRefs = useRef<Record<string, HTMLDivElement | null>>({});
 
-  // 1. Load survey and restore saved respondent info
+  // 1. Restore saved respondent info & background revalidate survey
   useEffect(() => {
-    async function load() {
-      setLoading(true);
-      const data = await fetchPresentation(code);
-      setSurvey(data);
+    let isMounted = true;
 
-      const saved = getLocalParticipant();
-      if (saved) {
-        const name = `${saved.firstName || ''} ${saved.lastName || ''}`.trim();
-        if (name) setFullName(name);
-        if (saved.whatsapp) setWhatsapp(saved.whatsapp);
-        if (saved.email) setEmail(saved.email);
-      }
-
-      setLoading(false);
+    const saved = getLocalParticipant();
+    if (saved) {
+      const name = `${saved.firstName || ''} ${saved.lastName || ''}`.trim();
+      if (name) setFullName(name);
+      if (saved.whatsapp) setWhatsapp(saved.whatsapp);
+      if (saved.email) setEmail(saved.email);
     }
-    load();
+
+    fetchPresentation(code).then((data) => {
+      if (!isMounted) return;
+      if (data) {
+        setSurvey(data);
+        try {
+          localStorage.setItem(`audiencemeter_survey_${code}`, JSON.stringify(data));
+        } catch {}
+      }
+      setLoading(false);
+    });
+
+    return () => {
+      isMounted = false;
+    };
   }, [code]);
 
   // Handle single choice selection
@@ -297,24 +333,45 @@ function SurveyFormContent({ params }: { params: Promise<{ code: string }> }) {
     window.scrollTo({ top: 0, behavior: 'smooth' });
   };
 
-  // Loading Screen
-  if (loading) {
+  // Loading Skeleton Screen (Instant perception of structure)
+  if (loading && !survey) {
     return (
-      <div style={{ minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-        <div style={{ textAlign: 'center' }}>
-          <div
-            style={{
-              width: '48px',
-              height: '48px',
-              border: '3px solid var(--accent-primary)',
-              borderTopColor: 'transparent',
-              borderRadius: '50%',
-              animation: 'spin 0.8s linear infinite',
-              margin: '0 auto 16px',
-            }}
-          />
-          <p style={{ color: 'var(--text-secondary)', fontSize: '0.95rem' }}>Loading Survey Form...</p>
-        </div>
+      <div style={{ minHeight: '100vh', display: 'flex', flexDirection: 'column' }}>
+        <header
+          style={{
+            display: 'flex',
+            justifyContent: 'space-between',
+            alignItems: 'center',
+            padding: '16px 32px',
+            borderBottom: '1px solid var(--border-subtle)',
+          }}
+        >
+          <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+            <div style={{ width: '32px', height: '32px', borderRadius: '8px', background: 'rgba(255,255,255,0.06)' }} />
+            <div style={{ width: '140px', height: '20px', borderRadius: '4px', background: 'rgba(255,255,255,0.06)' }} />
+          </div>
+          <ThemeToggle />
+        </header>
+
+        <main style={{ maxWidth: '780px', width: '100%', margin: '0 auto', padding: '32px 16px 60px' }}>
+          {/* Header Card Skeleton */}
+          <div className="glass-panel" style={{ borderRadius: '16px', padding: '32px', marginBottom: '20px' }}>
+            <div style={{ height: '32px', width: '70%', borderRadius: '6px', background: 'rgba(255,255,255,0.08)', marginBottom: '16px' }} />
+            <div style={{ height: '16px', width: '90%', borderRadius: '4px', background: 'rgba(255,255,255,0.04)', marginBottom: '8px' }} />
+            <div style={{ height: '16px', width: '50%', borderRadius: '4px', background: 'rgba(255,255,255,0.04)' }} />
+          </div>
+
+          {/* Question Skeleton Cards */}
+          {[1, 2, 3].map((i) => (
+            <div key={i} className="glass-panel" style={{ borderRadius: '16px', padding: '24px 28px', marginBottom: '20px' }}>
+              <div style={{ height: '20px', width: '55%', borderRadius: '4px', background: 'rgba(255,255,255,0.06)', marginBottom: '16px' }} />
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+                <div style={{ height: '40px', borderRadius: '8px', background: 'rgba(255,255,255,0.03)' }} />
+                <div style={{ height: '40px', borderRadius: '8px', background: 'rgba(255,255,255,0.03)' }} />
+              </div>
+            </div>
+          ))}
+        </main>
       </div>
     );
   }
