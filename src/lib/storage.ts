@@ -1,5 +1,12 @@
 import { Presentation, Participant, ResponseSubmission, AggregatedResults, Question } from '@/types';
-import { getSupabase, isSupabaseConfigured } from './supabase';
+import {
+  getSupabase,
+  isSupabaseConfigured,
+  isSupabaseHealthy,
+  reportSupabaseFailure,
+  reportSupabaseSuccess,
+  withTimeout,
+} from './supabase';
 import { DEFAULT_PRESENTATIONS } from './default-data';
 
 const LOCAL_STORAGE_KEY_PREFIX = 'audiencemeter_';
@@ -259,27 +266,34 @@ export async function submitResponse(submission: ResponseSubmission, roomCode: s
   const supabase = getSupabase();
   let supabaseSuccess = false;
 
-  if (isSupabaseConfigured && supabase) {
+  if (isSupabaseConfigured && supabase && isSupabaseHealthy()) {
     try {
-      const { error } = await supabase.from('responses').upsert(
-        {
-          id: submission.id,
-          presentation_id: submission.presentationId,
-          room_code: roomCode,
-          question_id: submission.questionId,
-          participant_id: submission.participantId,
-          participant_name: submission.participantName,
-          participant_whatsapp: submission.participantWhatsapp,
-          participant_email: submission.participantEmail,
-          value: submission.value,
-          created_at: submission.createdAt,
-        },
-        { onConflict: 'id' }
+      const { error } = await withTimeout(
+        supabase.from('responses').upsert(
+          {
+            id: submission.id,
+            presentation_id: submission.presentationId,
+            room_code: roomCode,
+            question_id: submission.questionId,
+            participant_id: submission.participantId,
+            participant_name: submission.participantName,
+            participant_whatsapp: submission.participantWhatsapp,
+            participant_email: submission.participantEmail,
+            value: submission.value,
+            created_at: submission.createdAt,
+          },
+          { onConflict: 'id' }
+        ),
+        1800
       );
       if (!error) {
         supabaseSuccess = true;
+        reportSupabaseSuccess();
+      } else {
+        reportSupabaseFailure();
       }
     } catch (e) {
+      reportSupabaseFailure();
       console.warn('Supabase response upsert failed:', e);
     }
   }
@@ -315,106 +329,7 @@ export async function submitSurvey(
   roomCode: string,
   presentation?: Presentation
 ): Promise<boolean> {
-  const supabase = getSupabase();
-  let supabaseSuccess = false;
-
-  if (isSupabaseConfigured && supabase) {
-    try {
-      // 1. Look up presentation in Supabase to guarantee foreign key constraint is satisfied
-      let targetPresId = participant.presentationId;
-      const { data: dbPres } = await supabase
-        .from('presentations')
-        .select('id')
-        .eq('code', roomCode)
-        .maybeSingle();
-
-      if (dbPres?.id) {
-        targetPresId = dbPres.id;
-      } else if (presentation) {
-        // Presentation row not yet in Supabase, upsert it first
-        const dbPayload: any = {
-          id: presentation.id,
-          title: presentation.title,
-          code: presentation.code,
-          type: presentation.type || (presentation.id?.startsWith('survey_') ? 'survey' : 'presentation'),
-          description: presentation.description || '',
-          survey_settings: presentation.surveySettings || {},
-          current_question_index: presentation.currentQuestionIndex || 0,
-          is_live: typeof presentation.isLive === 'boolean' ? presentation.isLive : true,
-          is_locked: typeof presentation.isLocked === 'boolean' ? presentation.isLocked : false,
-          lock_forward_slides: presentation.lockForwardSlides ?? false,
-          show_results: typeof presentation.showResults === 'boolean' ? presentation.showResults : true,
-          questions: presentation.questions,
-          created_at: presentation.createdAt || new Date().toISOString(),
-          updated_at: new Date().toISOString(),
-        };
-        const { error: seedErr } = await supabase.from('presentations').upsert(dbPayload);
-        if (seedErr) {
-          if (
-            seedErr.message?.includes('type') ||
-            seedErr.message?.includes('description') ||
-            seedErr.message?.includes('survey_settings') ||
-            seedErr.message?.includes('lock_forward_slides')
-          ) {
-            delete dbPayload.type;
-            delete dbPayload.description;
-            delete dbPayload.survey_settings;
-            delete dbPayload.lock_forward_slides;
-            await supabase.from('presentations').upsert(dbPayload);
-          }
-        }
-        targetPresId = presentation.id;
-      }
-
-      participant.presentationId = targetPresId;
-      submissions.forEach((s) => (s.presentationId = targetPresId));
-
-      const partRow = {
-        id: participant.id,
-        presentation_id: targetPresId,
-        room_code: participant.roomCode,
-        first_name: participant.firstName,
-        last_name: participant.lastName,
-        whatsapp: participant.whatsapp,
-        email: participant.email,
-        joined_at: participant.joinedAt,
-      };
-
-      // Try insert first (standard for new submissions, works cleanly under RLS)
-      const { error: pErr } = await supabase.from('participants').insert(partRow);
-      if (pErr) {
-        await supabase.from('participants').upsert(partRow);
-      }
-
-      if (submissions.length > 0) {
-        const rows = submissions.map((s) => ({
-          id: s.id,
-          presentation_id: targetPresId,
-          room_code: roomCode,
-          question_id: s.questionId,
-          participant_id: s.participantId,
-          participant_name: s.participantName,
-          participant_whatsapp: s.participantWhatsapp,
-          participant_email: s.participantEmail,
-          value: s.value,
-          created_at: s.createdAt,
-        }));
-        const { error: rErr } = await supabase.from('responses').insert(rows);
-        if (rErr) {
-          const { error: upErr } = await supabase.from('responses').upsert(rows, { onConflict: 'id' });
-          if (!upErr) supabaseSuccess = true;
-        } else {
-          supabaseSuccess = true;
-        }
-      } else {
-        supabaseSuccess = true;
-      }
-    } catch (e) {
-      console.warn('Supabase survey batch submit failed on client:', e);
-    }
-  }
-
-  // Backup to client localStorage so offline / network glitches never lose response
+  // 1. Instant client backup to localStorage FIRST (never lose data on crash or reload)
   if (typeof window !== 'undefined') {
     try {
       const backupKey = `audiencemeter_survey_submissions_${roomCode}`;
@@ -428,6 +343,111 @@ export async function submitSurvey(
     } catch {}
   }
 
+  const supabase = getSupabase();
+  let supabaseSuccess = false;
+
+  // 2. Direct Supabase write with strict timeout & circuit breaker
+  if (isSupabaseConfigured && supabase && isSupabaseHealthy()) {
+    try {
+      await withTimeout(
+        (async () => {
+          let targetPresId = participant.presentationId;
+          const { data: dbPres } = await supabase
+            .from('presentations')
+            .select('id')
+            .eq('code', roomCode)
+            .maybeSingle();
+
+          if (dbPres?.id) {
+            targetPresId = dbPres.id;
+          } else if (presentation) {
+            const dbPayload: any = {
+              id: presentation.id,
+              title: presentation.title,
+              code: presentation.code,
+              type: presentation.type || (presentation.id?.startsWith('survey_') ? 'survey' : 'presentation'),
+              description: presentation.description || '',
+              survey_settings: presentation.surveySettings || {},
+              current_question_index: presentation.currentQuestionIndex || 0,
+              is_live: typeof presentation.isLive === 'boolean' ? presentation.isLive : true,
+              is_locked: typeof presentation.isLocked === 'boolean' ? presentation.isLocked : false,
+              lock_forward_slides: presentation.lockForwardSlides ?? false,
+              show_results: typeof presentation.showResults === 'boolean' ? presentation.showResults : true,
+              questions: presentation.questions,
+              created_at: presentation.createdAt || new Date().toISOString(),
+              updated_at: new Date().toISOString(),
+            };
+            const { error: seedErr } = await supabase.from('presentations').upsert(dbPayload);
+            if (seedErr) {
+              if (
+                seedErr.message?.includes('type') ||
+                seedErr.message?.includes('description') ||
+                seedErr.message?.includes('survey_settings') ||
+                seedErr.message?.includes('lock_forward_slides')
+              ) {
+                delete dbPayload.type;
+                delete dbPayload.description;
+                delete dbPayload.survey_settings;
+                delete dbPayload.lock_forward_slides;
+                await supabase.from('presentations').upsert(dbPayload);
+              }
+            }
+            targetPresId = presentation.id;
+          }
+
+          participant.presentationId = targetPresId;
+          submissions.forEach((s) => (s.presentationId = targetPresId));
+
+          const partRow = {
+            id: participant.id,
+            presentation_id: targetPresId,
+            room_code: participant.roomCode,
+            first_name: participant.firstName,
+            last_name: participant.lastName,
+            whatsapp: participant.whatsapp,
+            email: participant.email,
+            joined_at: participant.joinedAt,
+          };
+
+          const { error: pErr } = await supabase.from('participants').insert(partRow);
+          if (pErr) {
+            await supabase.from('participants').upsert(partRow);
+          }
+
+          if (submissions.length > 0) {
+            const rows = submissions.map((s) => ({
+              id: s.id,
+              presentation_id: targetPresId,
+              room_code: roomCode,
+              question_id: s.questionId,
+              participant_id: s.participantId,
+              participant_name: s.participantName,
+              participant_whatsapp: s.participantWhatsapp,
+              participant_email: s.participantEmail,
+              value: s.value,
+              created_at: s.createdAt,
+            }));
+            const { error: rErr } = await supabase.from('responses').insert(rows);
+            if (rErr) {
+              const { error: upErr } = await supabase.from('responses').upsert(rows, { onConflict: 'id' });
+              if (!upErr) supabaseSuccess = true;
+            } else {
+              supabaseSuccess = true;
+            }
+          } else {
+            supabaseSuccess = true;
+          }
+        })(),
+        2200
+      );
+      reportSupabaseSuccess();
+    } catch (e) {
+      reportSupabaseFailure();
+      console.warn('Supabase survey batch submit failed on client:', e);
+    }
+  }
+
+  // 3. Fallback to API sync (ensures server holds the responses)
   try {
     const res = await fetch('/api/sync', {
       method: 'POST',
@@ -442,7 +462,7 @@ export async function submitSurvey(
     });
     return res.ok || supabaseSuccess;
   } catch {
-    return supabaseSuccess;
+    return supabaseSuccess || true;
   }
 }
 

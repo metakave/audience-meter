@@ -17,11 +17,15 @@ async function ensurePresentationInSupabase(
   preferredPresentation?: Presentation
 ): Promise<string | null> {
   try {
-    const { data: dbPres } = await supabase
-      .from('presentations')
-      .select('id, code')
-      .eq('code', code)
-      .maybeSingle();
+    const presRes: any = await withTimeout<any>(
+      supabase
+        .from('presentations')
+        .select('id, code')
+        .eq('code', code)
+        .maybeSingle(),
+      1500
+    );
+    const dbPres = presRes?.data;
 
     if (dbPres?.id) {
       return dbPres.id;
@@ -50,7 +54,10 @@ async function ensurePresentationInSupabase(
         created_at: pToSeed.createdAt || new Date().toISOString(),
         updated_at: new Date().toISOString(),
       };
-      const { error: seedErr } = await supabase.from('presentations').upsert(dbPayload);
+      const { error: seedErr } = await withTimeout<any>(
+        supabase.from('presentations').upsert(dbPayload),
+        1500
+      );
       if (seedErr) {
         if (
           seedErr.message?.includes('type') ||
@@ -62,13 +69,13 @@ async function ensurePresentationInSupabase(
           delete dbPayload.description;
           delete dbPayload.survey_settings;
           delete dbPayload.lock_forward_slides;
-          await supabase.from('presentations').upsert(dbPayload);
+          await withTimeout<any>(supabase.from('presentations').upsert(dbPayload), 1500);
         }
       }
       return pToSeed.id;
     }
   } catch (err) {
-    console.warn('ensurePresentationInSupabase failed:', err);
+    console.warn('ensurePresentationInSupabase failed or timed out:', err);
   }
   return null;
 }
@@ -354,8 +361,17 @@ export async function GET(req: NextRequest) {
         const storeResponses = store.responses[code] || [];
         const storeParticipants = store.participants[code] || [];
 
-        const finalResponses = responses.length > 0 ? responses : storeResponses;
-        const finalParticipants = participants.length > 0 ? participants : storeParticipants;
+        // Merge DB and store responses uniquely by id
+        const respMap = new Map<string, ResponseSubmission>();
+        storeResponses.forEach((r) => respMap.set(r.id, r));
+        responses.forEach((r) => respMap.set(r.id, r));
+        const finalResponses = Array.from(respMap.values());
+
+        // Merge DB and store participants uniquely by id
+        const partMap = new Map<string, Participant>();
+        storeParticipants.forEach((p) => partMap.set(p.id, p));
+        participants.forEach((p) => partMap.set(p.id, p));
+        const finalParticipants = Array.from(partMap.values());
 
         return NextResponse.json(
           {
@@ -546,32 +562,7 @@ export async function POST(req: NextRequest) {
     if (action === 'submit_response') {
       const submission: ResponseSubmission = body.submission;
 
-      if (isSupabaseConfigured && supabase) {
-        try {
-          const targetPresId =
-            (await ensurePresentationInSupabase(supabase, code, body.presentation)) ||
-            submission.presentationId;
-          const respRow = {
-            id: submission.id,
-            presentation_id: targetPresId,
-            room_code: code,
-            question_id: submission.questionId,
-            participant_id: submission.participantId,
-            participant_name: submission.participantName || '',
-            participant_whatsapp: submission.participantWhatsapp || '',
-            participant_email: submission.participantEmail || '',
-            value: submission.value,
-            created_at: submission.createdAt || new Date().toISOString(),
-          };
-          const { error: rErr } = await supabase.from('responses').insert(respRow);
-          if (rErr) {
-            await supabase.from('responses').upsert(respRow, { onConflict: 'id' });
-          }
-        } catch (e) {
-          console.warn('Supabase response upsert failed:', e);
-        }
-      }
-
+      // 1. Immediately save into store
       const list = store.responses[code] || [];
       const existingIdx = list.findIndex(
         (r: ResponseSubmission) =>
@@ -584,6 +575,41 @@ export async function POST(req: NextRequest) {
       }
       store.responses[code] = list;
       saveStoreData(store);
+
+      // 2. Sync to Supabase with strict timeout
+      if (isSupabaseConfigured && supabase && isSupabaseHealthy()) {
+        try {
+          await withTimeout(
+            (async () => {
+              const targetPresId =
+                (await ensurePresentationInSupabase(supabase, code, body.presentation)) ||
+                submission.presentationId;
+              const respRow = {
+                id: submission.id,
+                presentation_id: targetPresId,
+                room_code: code,
+                question_id: submission.questionId,
+                participant_id: submission.participantId,
+                participant_name: submission.participantName || '',
+                participant_whatsapp: submission.participantWhatsapp || '',
+                participant_email: submission.participantEmail || '',
+                value: submission.value,
+                created_at: submission.createdAt || new Date().toISOString(),
+              };
+              const { error: rErr } = await supabase.from('responses').insert(respRow);
+              if (rErr) {
+                await supabase.from('responses').upsert(respRow, { onConflict: 'id' });
+              }
+            })(),
+            1800
+          );
+          reportSupabaseSuccess();
+        } catch (e) {
+          reportSupabaseFailure();
+          console.warn('Supabase response upsert failed or timed out:', e);
+        }
+      }
+
       return NextResponse.json({ success: true, count: list.length });
     }
 
@@ -591,52 +617,7 @@ export async function POST(req: NextRequest) {
       const participant: Participant = body.participant;
       const submissions: ResponseSubmission[] = body.submissions || [];
 
-      if (isSupabaseConfigured && supabase) {
-        try {
-          const targetPresId =
-            (await ensurePresentationInSupabase(supabase, code, body.presentation)) ||
-            participant?.presentationId;
-
-          if (participant && targetPresId) {
-            const partRow = {
-              id: participant.id,
-              presentation_id: targetPresId,
-              room_code: participant.roomCode || code,
-              first_name: participant.firstName || '',
-              last_name: participant.lastName || '',
-              whatsapp: participant.whatsapp || '',
-              email: participant.email || '',
-              joined_at: participant.joinedAt || new Date().toISOString(),
-            };
-            const { error: pErr } = await supabase.from('participants').insert(partRow);
-            if (pErr) {
-              await supabase.from('participants').upsert(partRow);
-            }
-          }
-
-          if (submissions.length > 0 && targetPresId) {
-            const rows = submissions.map((s) => ({
-              id: s.id,
-              presentation_id: targetPresId,
-              room_code: code,
-              question_id: s.questionId,
-              participant_id: s.participantId,
-              participant_name: s.participantName || '',
-              participant_whatsapp: s.participantWhatsapp || '',
-              participant_email: s.participantEmail || '',
-              value: s.value,
-              created_at: s.createdAt || new Date().toISOString(),
-            }));
-            const { error: rErr } = await supabase.from('responses').insert(rows);
-            if (rErr) {
-              await supabase.from('responses').upsert(rows, { onConflict: 'id' });
-            }
-          }
-        } catch (e) {
-          console.warn('Supabase submit_survey batch failed:', e);
-        }
-      }
-
+      // 1. Immediately save participant and responses into store (<1ms, zero timeouts)
       if (participant) {
         const pList = store.participants[code] || [];
         const existingPIdx = pList.findIndex((p: Participant) => p.id === participant.id);
@@ -662,6 +643,60 @@ export async function POST(req: NextRequest) {
       }
       store.responses[code] = rList;
       saveStoreData(store);
+
+      // 2. Sync to Supabase with strict timeout
+      if (isSupabaseConfigured && supabase && isSupabaseHealthy()) {
+        try {
+          await withTimeout(
+            (async () => {
+              const targetPresId =
+                (await ensurePresentationInSupabase(supabase, code, body.presentation)) ||
+                participant?.presentationId;
+
+              if (participant && targetPresId) {
+                const partRow = {
+                  id: participant.id,
+                  presentation_id: targetPresId,
+                  room_code: participant.roomCode || code,
+                  first_name: participant.firstName || '',
+                  last_name: participant.lastName || '',
+                  whatsapp: participant.whatsapp || '',
+                  email: participant.email || '',
+                  joined_at: participant.joinedAt || new Date().toISOString(),
+                };
+                const { error: pErr } = await supabase.from('participants').insert(partRow);
+                if (pErr) {
+                  await supabase.from('participants').upsert(partRow);
+                }
+              }
+
+              if (submissions.length > 0 && targetPresId) {
+                const rows = submissions.map((s) => ({
+                  id: s.id,
+                  presentation_id: targetPresId,
+                  room_code: code,
+                  question_id: s.questionId,
+                  participant_id: s.participantId,
+                  participant_name: s.participantName || '',
+                  participant_whatsapp: s.participantWhatsapp || '',
+                  participant_email: s.participantEmail || '',
+                  value: s.value,
+                  created_at: s.createdAt || new Date().toISOString(),
+                }));
+                const { error: rErr } = await supabase.from('responses').insert(rows);
+                if (rErr) {
+                  await supabase.from('responses').upsert(rows, { onConflict: 'id' });
+                }
+              }
+            })(),
+            2000
+          );
+          reportSupabaseSuccess();
+        } catch (e) {
+          reportSupabaseFailure();
+          console.warn('Supabase submit_survey batch failed or timed out:', e);
+        }
+      }
 
       return NextResponse.json({ success: true, count: rList.length });
     }
