@@ -1,7 +1,14 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { Presentation, Participant, ResponseSubmission } from '@/types';
 import { getStoreData, saveStoreData } from '@/lib/server-store';
-import { getSupabase, isSupabaseConfigured } from '@/lib/supabase';
+import {
+  getSupabase,
+  isSupabaseConfigured,
+  isSupabaseHealthy,
+  reportSupabaseFailure,
+  reportSupabaseSuccess,
+  withTimeout,
+} from '@/lib/supabase';
 import { DEFAULT_PRESENTATIONS } from '@/lib/default-data';
 
 async function ensurePresentationInSupabase(
@@ -74,21 +81,26 @@ export async function GET(req: NextRequest) {
   const supabase = getSupabase();
 
   if (action === 'list') {
-    if (isSupabaseConfigured && supabase) {
+    if (isSupabaseConfigured && supabase && isSupabaseHealthy()) {
       try {
-        // Run all list queries concurrently in parallel
-        const [presRes, partRes, respRes] = await Promise.all([
-          supabase
-            .from('presentations')
-            .select('*')
-            .order('created_at', { ascending: false }),
-          supabase
-            .from('participants')
-            .select('id, presentation_id, room_code'),
-          supabase
-            .from('responses')
-            .select('id, presentation_id, participant_id'),
-        ]);
+        // Run all list queries concurrently in parallel with 2.2s timeout
+        const [presRes, partRes, respRes] = await withTimeout(
+          Promise.all([
+            supabase
+              .from('presentations')
+              .select('*')
+              .order('created_at', { ascending: false }),
+            supabase
+              .from('participants')
+              .select('id, presentation_id, room_code'),
+            supabase
+              .from('responses')
+              .select('id, presentation_id, participant_id'),
+          ]),
+          2200
+        );
+
+        reportSupabaseSuccess();
 
         const presList = presRes.data;
         const error = presRes.error;
@@ -191,7 +203,8 @@ export async function GET(req: NextRequest) {
           );
         }
       } catch (e) {
-        console.warn('Supabase list fetch error:', e);
+        reportSupabaseFailure();
+        console.warn('Supabase list fetch error (circuit-breaker tripped, serving local store):', e);
       }
     }
 
@@ -219,7 +232,7 @@ export async function GET(req: NextRequest) {
   const isSurveyOnly = searchParams.get('survey_only') === 'true' || searchParams.get('survey_only') === '1';
 
   // Fetch individual presentation & responses
-  if (isSupabaseConfigured && supabase) {
+  if (isSupabaseConfigured && supabase && isSupabaseHealthy()) {
     try {
       const presPromise = supabase
         .from('presentations')
@@ -232,36 +245,18 @@ export async function GET(req: NextRequest) {
       let respData: any[] = [];
 
       if (isSurveyOnly) {
-        const { data } = await presPromise;
-        pData = data;
+        const presRes: any = await withTimeout<any>(presPromise, 2200);
+        pData = presRes?.data;
+        reportSupabaseSuccess();
       } else if (presId) {
-        // High-speed parallel indexed execution:
+        // High-speed parallel indexed execution with 2.2s timeout:
         // - presentations hits idx_presentations_code
         // - participants hits idx_participants_room
         // - responses hits idx_responses_presentation
         const targetIds = presId === code ? [code] : [presId, code];
-        const [pRes, partRes, respRes] = await Promise.all([
-          presPromise,
-          supabase
-            .from('participants')
-            .select('*')
-            .eq('room_code', code)
-            .order('joined_at', { ascending: false }),
-          supabase
-            .from('responses')
-            .select('*')
-            .in('presentation_id', targetIds)
-            .order('created_at', { ascending: false }),
-        ]);
-        pData = pRes.data;
-        partData = partRes.data || [];
-        respData = respRes.data || [];
-      } else {
-        const { data } = await presPromise;
-        pData = data;
-        if (pData) {
-          const targetIds = pData.id === code ? [code] : [pData.id, code];
-          const [partRes, respRes] = await Promise.all([
+        const [pRes, partRes, respRes]: any = await withTimeout<any>(
+          Promise.all([
+            presPromise,
             supabase
               .from('participants')
               .select('*')
@@ -272,10 +267,37 @@ export async function GET(req: NextRequest) {
               .select('*')
               .in('presentation_id', targetIds)
               .order('created_at', { ascending: false }),
-          ]);
-          partData = partRes.data || [];
-          respData = respRes.data || [];
+          ]),
+          2200
+        );
+        pData = pRes?.data;
+        partData = partRes?.data || [];
+        respData = respRes?.data || [];
+        reportSupabaseSuccess();
+      } else {
+        const presRes: any = await withTimeout<any>(presPromise, 2200);
+        pData = presRes?.data;
+        if (pData) {
+          const targetIds = pData.id === code ? [code] : [pData.id, code];
+          const [partRes, respRes]: any = await withTimeout<any>(
+            Promise.all([
+              supabase
+                .from('participants')
+                .select('*')
+                .eq('room_code', code)
+                .order('joined_at', { ascending: false }),
+              supabase
+                .from('responses')
+                .select('*')
+                .in('presentation_id', targetIds)
+                .order('created_at', { ascending: false }),
+            ]),
+            2200
+          );
+          partData = partRes?.data || [];
+          respData = respRes?.data || [];
         }
+        reportSupabaseSuccess();
       }
 
       if (pData) {
@@ -383,7 +405,8 @@ export async function GET(req: NextRequest) {
         }
       }
     } catch (e) {
-      console.warn('Supabase fetch presentation failed in GET /api/sync:', e);
+      reportSupabaseFailure();
+      console.warn('Supabase fetch presentation failed in GET /api/sync (circuit breaker tripped):', e);
     }
   }
 
