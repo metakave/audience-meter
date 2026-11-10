@@ -492,71 +492,74 @@ function PresenterLiveContent({
                 )}
 
                 {/* C. True / False Split */}
-                {currentQuestion.type === 'true_false' && (
-                  <div
-                    style={{
-                      display: 'grid',
-                      gridTemplateColumns: '1fr 1fr',
-                      gap: '24px',
-                    }}
-                  >
-                    {/* True Card */}
+                {currentQuestion.type === 'true_false' && (() => {
+                  const isBangla = /[\u0980-\u09FF]/.test(currentQuestion.title || '');
+                  return (
                     <div
-                      className="glass-panel"
                       style={{
-                        padding: '36px',
-                        textAlign: 'center',
-                        border: '2px solid rgba(16, 185, 129, 0.4)',
-                        background: 'rgba(16, 185, 129, 0.08)',
+                        display: 'grid',
+                        gridTemplateColumns: '1fr 1fr',
+                        gap: '24px',
                       }}
                     >
-                      <div style={{ fontSize: '1.2rem', fontWeight: 700, color: '#34d399', marginBottom: '8px' }}>
-                        TRUE
+                      {/* True Card */}
+                      <div
+                        className="glass-panel"
+                        style={{
+                          padding: '36px',
+                          textAlign: 'center',
+                          border: '2px solid rgba(16, 185, 129, 0.4)',
+                          background: 'rgba(16, 185, 129, 0.08)',
+                        }}
+                      >
+                        <div style={{ fontSize: '1.2rem', fontWeight: 700, color: '#34d399', marginBottom: '8px' }}>
+                          {isBangla ? 'সত্য (TRUE)' : 'TRUE'}
+                        </div>
+                        <div style={{ fontSize: '4rem', fontWeight: 800, color: 'var(--text-primary)', lineHeight: 1 }}>
+                          {aggregated?.totalResponses
+                            ? Math.round(
+                                ((aggregated.trueFalseCounts?.trueCount ?? 0) /
+                                  aggregated.totalResponses) *
+                                  100
+                              )
+                            : 0}
+                          %
+                        </div>
+                        <div style={{ fontSize: '0.9rem', color: 'var(--text-muted)', marginTop: '8px' }}>
+                          {aggregated?.trueFalseCounts?.trueCount ?? 0} votes
+                        </div>
                       </div>
-                      <div style={{ fontSize: '4rem', fontWeight: 800, color: 'var(--text-primary)', lineHeight: 1 }}>
-                        {aggregated?.totalResponses
-                          ? Math.round(
-                              ((aggregated.trueFalseCounts?.trueCount ?? 0) /
-                                aggregated.totalResponses) *
-                                100
-                            )
-                          : 0}
-                        %
-                      </div>
-                      <div style={{ fontSize: '0.9rem', color: 'var(--text-muted)', marginTop: '8px' }}>
-                        {aggregated?.trueFalseCounts?.trueCount ?? 0} votes
-                      </div>
-                    </div>
 
-                    {/* False Card */}
-                    <div
-                      className="glass-panel"
-                      style={{
-                        padding: '36px',
-                        textAlign: 'center',
-                        border: '2px solid rgba(239, 68, 68, 0.4)',
-                        background: 'rgba(239, 68, 68, 0.08)',
-                      }}
-                    >
-                      <div style={{ fontSize: '1.2rem', fontWeight: 700, color: '#f87171', marginBottom: '8px' }}>
-                        FALSE
-                      </div>
-                      <div style={{ fontSize: '4rem', fontWeight: 800, color: 'var(--text-primary)', lineHeight: 1 }}>
-                        {aggregated?.totalResponses
-                          ? Math.round(
-                              ((aggregated.trueFalseCounts?.falseCount ?? 0) /
-                                aggregated.totalResponses) *
-                                100
-                            )
-                          : 0}
-                        %
-                      </div>
-                      <div style={{ fontSize: '0.9rem', color: 'var(--text-muted)', marginTop: '8px' }}>
-                        {aggregated?.trueFalseCounts?.falseCount ?? 0} votes
+                      {/* False Card */}
+                      <div
+                        className="glass-panel"
+                        style={{
+                          padding: '36px',
+                          textAlign: 'center',
+                          border: '2px solid rgba(239, 68, 68, 0.4)',
+                          background: 'rgba(239, 68, 68, 0.08)',
+                        }}
+                      >
+                        <div style={{ fontSize: '1.2rem', fontWeight: 700, color: '#f87171', marginBottom: '8px' }}>
+                          {isBangla ? 'মিথ্যা (FALSE)' : 'FALSE'}
+                        </div>
+                        <div style={{ fontSize: '4rem', fontWeight: 800, color: 'var(--text-primary)', lineHeight: 1 }}>
+                          {aggregated?.totalResponses
+                            ? Math.round(
+                                ((aggregated.trueFalseCounts?.falseCount ?? 0) /
+                                  aggregated.totalResponses) *
+                                  100
+                              )
+                            : 0}
+                          %
+                        </div>
+                        <div style={{ fontSize: '0.9rem', color: 'var(--text-muted)', marginTop: '8px' }}>
+                          {aggregated?.trueFalseCounts?.falseCount ?? 0} votes
+                        </div>
                       </div>
                     </div>
-                  </div>
-                )}
+                  );
+                })()}
 
                 {/* D. Rating Scale */}
                 {currentQuestion.type === 'rating_scale' && (

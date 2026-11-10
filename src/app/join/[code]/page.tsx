@@ -1236,86 +1236,96 @@ function ParticipantJoinContent({
             )}
 
             {/* C. True / False */}
-            {currentQuestion.type === 'true_false' && (
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
-                <button
-                  type="button"
-                  disabled={isLocked || isSubmitting}
-                  onClick={() => {
-                    setSelectedOption('true');
-                    handleSubmitAnswer('true');
-                  }}
-                  className={`option-select-btn ${selectedOption === 'true' ? 'selected' : ''}`}
-                  style={{
-                    flexDirection: 'column',
-                    padding: '20px 14px',
-                    textAlign: 'center',
-                    justifyContent: 'center',
-                    borderColor: selectedOption === 'true' ? '#10b981' : undefined,
-                    background: selectedOption === 'true' ? 'rgba(16, 185, 129, 0.15)' : undefined,
-                  }}
-                >
-                  <span style={{ fontSize: '1.3rem', fontWeight: 800, color: '#34d399' }}>TRUE</span>
-                </button>
+            {currentQuestion.type === 'true_false' && (() => {
+              const isBangla = /[\u0980-\u09FF]/.test(currentQuestion.title || '');
+              return (
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
+                  <button
+                    type="button"
+                    disabled={isLocked || isSubmitting}
+                    onClick={() => {
+                      setSelectedOption('true');
+                      handleSubmitAnswer('true');
+                    }}
+                    className={`option-select-btn ${selectedOption === 'true' ? 'selected' : ''}`}
+                    style={{
+                      flexDirection: 'column',
+                      padding: '20px 14px',
+                      textAlign: 'center',
+                      justifyContent: 'center',
+                      borderColor: selectedOption === 'true' ? '#10b981' : undefined,
+                      background: selectedOption === 'true' ? 'rgba(16, 185, 129, 0.15)' : undefined,
+                    }}
+                  >
+                    <span style={{ fontSize: '1.3rem', fontWeight: 800, color: '#34d399' }}>
+                      {isBangla ? '👍 সত্য' : 'TRUE'}
+                    </span>
+                  </button>
 
-                <button
-                  type="button"
-                  disabled={isLocked || isSubmitting}
-                  onClick={() => {
-                    setSelectedOption('false');
-                    handleSubmitAnswer('false');
-                  }}
-                  className={`option-select-btn ${selectedOption === 'false' ? 'selected' : ''}`}
-                  style={{
-                    flexDirection: 'column',
-                    padding: '20px 14px',
-                    textAlign: 'center',
-                    justifyContent: 'center',
-                    borderColor: selectedOption === 'false' ? '#ef4444' : undefined,
-                    background: selectedOption === 'false' ? 'rgba(239, 68, 68, 0.15)' : undefined,
-                  }}
-                >
-                  <span style={{ fontSize: '1.3rem', fontWeight: 800, color: '#f87171' }}>FALSE</span>
-                </button>
-              </div>
-            )}
+                  <button
+                    type="button"
+                    disabled={isLocked || isSubmitting}
+                    onClick={() => {
+                      setSelectedOption('false');
+                      handleSubmitAnswer('false');
+                    }}
+                    className={`option-select-btn ${selectedOption === 'false' ? 'selected' : ''}`}
+                    style={{
+                      flexDirection: 'column',
+                      padding: '20px 14px',
+                      textAlign: 'center',
+                      justifyContent: 'center',
+                      borderColor: selectedOption === 'false' ? '#ef4444' : undefined,
+                      background: selectedOption === 'false' ? 'rgba(239, 68, 68, 0.15)' : undefined,
+                    }}
+                  >
+                    <span style={{ fontSize: '1.3rem', fontWeight: 800, color: '#f87171' }}>
+                      {isBangla ? '👎 মিথ্যা' : 'FALSE'}
+                    </span>
+                  </button>
+                </div>
+              );
+            })()}
 
             {/* D. Short Answer (Word Cloud) */}
-            {currentQuestion.type === 'short_answer' && (
-              <form
-                onSubmit={(e) => {
-                  e.preventDefault();
-                  handleSubmitAnswer();
-                }}
-                style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}
-              >
-                <input
-                  type="text"
-                  maxLength={30}
-                  disabled={isLocked || isSubmitting}
-                  value={textAnswer}
-                  onChange={(e) => setTextAnswer(e.target.value)}
-                  placeholder="Enter word or short phrase..."
-                  style={{
-                    width: '100%',
-                    padding: '14px 16px',
-                    background: 'var(--bg-tertiary)',
-                    border: '2px solid var(--border-subtle)',
-                    borderRadius: '12px',
-                    color: 'var(--text-primary)',
-                    fontSize: '1rem',
+            {currentQuestion.type === 'short_answer' && (() => {
+              const isBangla = /[\u0980-\u09FF]/.test(currentQuestion.title || '');
+              return (
+                <form
+                  onSubmit={(e) => {
+                    e.preventDefault();
+                    handleSubmitAnswer();
                   }}
-                />
-                <button
-                  type="submit"
-                  disabled={isLocked || isSubmitting || !textAnswer.trim()}
-                  className="btn-primary"
-                  style={{ padding: '12px', fontSize: '0.95rem' }}
+                  style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}
                 >
-                  <Send size={15} /> {isSubmitting ? 'Sending...' : 'Send Word'}
-                </button>
-              </form>
-            )}
+                  <input
+                    type="text"
+                    maxLength={50}
+                    disabled={isLocked || isSubmitting}
+                    value={textAnswer}
+                    onChange={(e) => setTextAnswer(e.target.value)}
+                    placeholder={isBangla ? 'এখানে আপনার উত্তর লিখুন...' : 'Enter word or short phrase...'}
+                    style={{
+                      width: '100%',
+                      padding: '14px 16px',
+                      background: 'var(--bg-tertiary)',
+                      border: '2px solid var(--border-subtle)',
+                      borderRadius: '12px',
+                      color: 'var(--text-primary)',
+                      fontSize: '1rem',
+                    }}
+                  />
+                  <button
+                    type="submit"
+                    disabled={isLocked || isSubmitting || !textAnswer.trim()}
+                    className="btn-primary"
+                    style={{ padding: '12px', fontSize: '0.95rem' }}
+                  >
+                    <Send size={15} /> {isSubmitting ? (isBangla ? 'পাঠানো হচ্ছে...' : 'Sending...') : (isBangla ? 'উত্তর জমা দিন' : 'Send Word')}
+                  </button>
+                </form>
+              );
+            })()}
 
             {/* E. Long Answer (Open feedback / Q&A) */}
             {currentQuestion.type === 'long_answer' && (
