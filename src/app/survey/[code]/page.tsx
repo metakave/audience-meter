@@ -7,6 +7,8 @@ import {
   getLocalParticipant,
   saveLocalParticipant,
   submitSurvey,
+  flushPendingSurveys,
+  normalizeBanglaDigits,
 } from '@/lib/storage';
 import { Presentation, Participant, ResponseSubmission, Question } from '@/types';
 import confetti from 'canvas-confetti';
@@ -72,6 +74,7 @@ function SurveyFormContent({ params }: { params: Promise<{ code: string }> }) {
 
   // Answers map: questionId -> value (string or JSON string for multiple_choice)
   const [answers, setAnswers] = useState<Record<string, any>>({});
+  const [otherTextAnswers, setOtherTextAnswers] = useState<Record<string, string>>({});
   const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
 
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -94,6 +97,11 @@ function SurveyFormContent({ params }: { params: Promise<{ code: string }> }) {
   const isFirstPage = currentPage === 1;
   const isLastPage = currentPage === totalPages;
   const progressPercent = totalPages > 1 ? Math.round((currentPage / totalPages) * 100) : 100;
+  const isSurveyBangla = Boolean(
+    survey &&
+      (/[\u0980-\u09FF]/.test(survey.title || '') ||
+        survey.questions?.some((q) => /[\u0980-\u09FF]/.test(q.title || '')))
+  );
 
   // Total answered questions count
   const answeredCount = survey
@@ -124,6 +132,9 @@ function SurveyFormContent({ params }: { params: Promise<{ code: string }> }) {
         const draft = JSON.parse(draftRaw);
         if (draft && typeof draft.answers === 'object' && Object.keys(draft.answers).length > 0) {
           setAnswers(draft.answers);
+          if (draft.otherTextAnswers && typeof draft.otherTextAnswers === 'object') {
+            setOtherTextAnswers(draft.otherTextAnswers);
+          }
           if (draft.fullName) setFullName(draft.fullName);
           if (draft.whatsapp) setWhatsapp(draft.whatsapp);
           if (draft.email) setEmail(draft.email);
@@ -151,7 +162,19 @@ function SurveyFormContent({ params }: { params: Promise<{ code: string }> }) {
     };
   }, [code]);
 
-  // Auto-save draft whenever answers or progress change (protects against browser refresh/crash)
+  // Background sync: flush any pending surveys whenever device is online
+  useEffect(() => {
+    const handleOnline = () => {
+      flushPendingSurveys();
+    };
+    window.addEventListener('online', handleOnline);
+    flushPendingSurveys();
+    return () => {
+      window.removeEventListener('online', handleOnline);
+    };
+  }, []);
+
+  // Auto-save draft whenever answers, otherTextAnswers, or progress change (protects against browser refresh/crash)
   useEffect(() => {
     if (isSubmitted) return;
     if (Object.keys(answers).length === 0 && !fullName && !whatsapp) return;
@@ -160,6 +183,7 @@ function SurveyFormContent({ params }: { params: Promise<{ code: string }> }) {
         `audiencemeter_draft_${code}`,
         JSON.stringify({
           answers,
+          otherTextAnswers,
           fullName,
           whatsapp,
           email,
@@ -169,7 +193,7 @@ function SurveyFormContent({ params }: { params: Promise<{ code: string }> }) {
         })
       );
     } catch {}
-  }, [answers, fullName, whatsapp, email, isAnonymous, currentPage, code, isSubmitted]);
+  }, [answers, otherTextAnswers, fullName, whatsapp, email, isAnonymous, currentPage, code, isSubmitted]);
 
   // Handle single choice selection
   const handleSelectOption = (questionId: string, optionId: string) => {
@@ -353,9 +377,36 @@ function SurveyFormContent({ params }: { params: Promise<{ code: string }> }) {
 
     try {
       // Build participant profile (extract from fields or custom survey questions)
-      const detectedName = fullName.trim() || (answers['bscic-q-name'] ? String(answers['bscic-q-name']).trim() : '');
-      const safeWhatsapp = isAnonymous ? '' : (whatsapp.trim() || (answers['bscic-q-phone'] ? String(answers['bscic-q-phone']).trim() : ''));
-      const safeEmail = isAnonymous ? '' : email.trim();
+      let detectedName = fullName.trim();
+      let safeWhatsapp = isAnonymous ? '' : normalizeBanglaDigits(whatsapp.trim());
+      let safeEmail = isAnonymous ? '' : email.trim().toLowerCase();
+
+      // Smart discovery: check survey questions if top profile fields were left blank
+      if (!detectedName) {
+        for (const q of survey.questions) {
+          const t = q.title.toLowerCase();
+          if (t.includes('নাম') || t.includes('name')) {
+            const v = answers[q.id];
+            if (v && typeof v === 'string' && v.trim()) {
+              detectedName = v.trim();
+              break;
+            }
+          }
+        }
+      }
+      if (!safeWhatsapp && !isAnonymous) {
+        for (const q of survey.questions) {
+          const t = q.title.toLowerCase();
+          if (t.includes('ফোন') || t.includes('phone') || t.includes('mobile') || t.includes('whatsapp') || t.includes('নম্বর')) {
+            const v = answers[q.id];
+            if (v && typeof v === 'string' && v.trim()) {
+              safeWhatsapp = normalizeBanglaDigits(v.trim());
+              break;
+            }
+          }
+        }
+      }
+
       const nameParts = (isAnonymous ? 'Anonymous Respondent' : (detectedName || 'Anonymous Respondent')).split(' ');
       const firstName = nameParts[0] || 'Anonymous';
       const lastName = nameParts.slice(1).join(' ');
@@ -392,9 +443,14 @@ function SurveyFormContent({ params }: { params: Promise<{ code: string }> }) {
         if (val !== undefined && val !== null && val !== '') {
           let stringValue: string;
           if (Array.isArray(val)) {
-            stringValue = JSON.stringify(val);
+            const enriched = val.map((id) => {
+              const other = otherTextAnswers[`${q.id}_${id}`];
+              return other ? `${id}:::${other.trim()}` : id;
+            });
+            stringValue = JSON.stringify(enriched);
           } else {
-            stringValue = val.toString();
+            const other = otherTextAnswers[`${q.id}_${val}`];
+            stringValue = other ? `${val}:::${other.trim()}` : val.toString();
           }
 
           submissions.push({
@@ -430,7 +486,11 @@ function SurveyFormContent({ params }: { params: Promise<{ code: string }> }) {
           });
         } catch {}
       } else {
-        setSubmitError('Failed to record your feedback. Please check your connection and try again.');
+        setSubmitError(
+          isSurveyBangla
+            ? 'সার্ভে জমা দিতে সমস্যা হয়েছে। আপনার উত্তরগুলো নিরাপদে রাখা আছে, অনুগ্রহ করে পুনরায় চেষ্টা করুন।'
+            : 'Connection was interrupted. Your answers are safely preserved. Please tap Retry to submit.'
+        );
       }
     } catch (err: any) {
       console.error('Submission error:', err);
@@ -1193,9 +1253,28 @@ function SurveyFormContent({ params }: { params: Promise<{ code: string }> }) {
                 <h1 style={{ fontSize: '1.85rem', fontWeight: 800, lineHeight: 1.25, letterSpacing: '-0.5px' }}>
                   {survey.title}
                 </h1>
-                <span className="code-pill" title="Survey Share Code">
-                  Code: {survey.code}
-                </span>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                  <span
+                    style={{
+                      fontSize: '0.78rem',
+                      color: '#10b981',
+                      display: 'inline-flex',
+                      alignItems: 'center',
+                      gap: '4px',
+                      background: 'rgba(16, 185, 129, 0.1)',
+                      padding: '4px 10px',
+                      borderRadius: '9999px',
+                      border: '1px solid rgba(16, 185, 129, 0.25)',
+                      fontWeight: 600,
+                    }}
+                    title="All progress and draft answers are continuously saved locally"
+                  >
+                    <Check size={12} strokeWidth={3} /> {isSurveyBangla ? 'অটো-সেভ সক্রিয়' : 'Auto-saved'}
+                  </span>
+                  <span className="code-pill" title="Survey Share Code">
+                    Code: {survey.code}
+                  </span>
+                </div>
               </div>
 
               {survey.description && (
@@ -1404,6 +1483,9 @@ function SurveyFormContent({ params }: { params: Promise<{ code: string }> }) {
                             });
                           }
                         }}
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter') e.preventDefault();
+                        }}
                         placeholder="John Doe"
                         style={{
                           width: '100%',
@@ -1434,7 +1516,8 @@ function SurveyFormContent({ params }: { params: Promise<{ code: string }> }) {
                         type="tel"
                         value={whatsapp}
                         onChange={(e) => {
-                          setWhatsapp(e.target.value);
+                          const norm = normalizeBanglaDigits(e.target.value);
+                          setWhatsapp(norm);
                           if (fieldErrors['whatsapp']) {
                             setFieldErrors((prev) => {
                               const next = { ...prev };
@@ -1442,6 +1525,9 @@ function SurveyFormContent({ params }: { params: Promise<{ code: string }> }) {
                               return next;
                             });
                           }
+                        }}
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter') e.preventDefault();
                         }}
                         placeholder="+1 234 567 8900"
                         style={{
@@ -1481,6 +1567,9 @@ function SurveyFormContent({ params }: { params: Promise<{ code: string }> }) {
                               return next;
                             });
                           }
+                        }}
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter') e.preventDefault();
                         }}
                         placeholder="john@example.com"
                         style={{
@@ -1572,48 +1661,75 @@ function SurveyFormContent({ params }: { params: Promise<{ code: string }> }) {
                     <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
                       {q.options.map((opt) => {
                         const isSelected = currentAnswer === opt.id;
+                        const hasOtherInput = opt.text.includes('অন্যান্য') || opt.text.toLowerCase().includes('other');
                         return (
-                          <div
-                            key={opt.id}
-                            onClick={() => handleSelectOption(q.id, opt.id)}
-                            style={{
-                              display: 'flex',
-                              alignItems: 'center',
-                              gap: '12px',
-                              padding: '12px 16px',
-                              borderRadius: '10px',
-                              cursor: 'pointer',
-                              background: isSelected ? 'rgba(99, 102, 241, 0.15)' : 'rgba(255, 255, 255, 0.03)',
-                              border: `1.5px solid ${isSelected ? 'var(--accent-primary)' : 'var(--border-subtle)'}`,
-                              transition: 'all 0.15s ease',
-                            }}
-                          >
+                          <div key={opt.id}>
                             <div
+                              onClick={() => handleSelectOption(q.id, opt.id)}
                               style={{
-                                width: '18px',
-                                height: '18px',
-                                borderRadius: '50%',
-                                border: `2px solid ${isSelected ? 'var(--accent-primary)' : 'var(--text-muted)'}`,
                                 display: 'flex',
                                 alignItems: 'center',
-                                justifyContent: 'center',
-                                flexShrink: 0,
+                                gap: '12px',
+                                padding: '12px 16px',
+                                borderRadius: '10px',
+                                cursor: 'pointer',
+                                background: isSelected ? 'rgba(99, 102, 241, 0.15)' : 'rgba(255, 255, 255, 0.03)',
+                                border: `1.5px solid ${isSelected ? 'var(--accent-primary)' : 'var(--border-subtle)'}`,
+                                transition: 'all 0.15s ease',
                               }}
                             >
-                              {isSelected && (
-                                <div
+                              <div
+                                style={{
+                                  width: '18px',
+                                  height: '18px',
+                                  borderRadius: '50%',
+                                  border: `2px solid ${isSelected ? 'var(--accent-primary)' : 'var(--text-muted)'}`,
+                                  display: 'flex',
+                                  alignItems: 'center',
+                                  justifyContent: 'center',
+                                  flexShrink: 0,
+                                }}
+                              >
+                                {isSelected && (
+                                  <div
+                                    style={{
+                                      width: '8px',
+                                      height: '8px',
+                                      borderRadius: '50%',
+                                      background: 'var(--accent-primary)',
+                                    }}
+                                  />
+                                )}
+                              </div>
+                              <span style={{ fontSize: '0.92rem', color: isSelected ? 'var(--text-primary)' : 'var(--text-secondary)' }}>
+                                {opt.text}
+                              </span>
+                            </div>
+                            {isSelected && hasOtherInput && (
+                              <div style={{ marginTop: '8px', paddingLeft: '30px' }} onClick={(e) => e.stopPropagation()}>
+                                <input
+                                  type="text"
+                                  value={otherTextAnswers[`${q.id}_${opt.id}`] || ''}
+                                  onChange={(e) => {
+                                    const val = e.target.value;
+                                    setOtherTextAnswers((prev) => ({ ...prev, [`${q.id}_${opt.id}`]: val }));
+                                  }}
+                                  onKeyDown={(e) => {
+                                    if (e.key === 'Enter') e.preventDefault();
+                                  }}
+                                  placeholder={isBanglaQuestion ? 'অন্যান্য বিবরণ বা পণ্যের নাম লিখুন...' : 'Please specify...'}
                                   style={{
-                                    width: '8px',
-                                    height: '8px',
-                                    borderRadius: '50%',
-                                    background: 'var(--accent-primary)',
+                                    width: '100%',
+                                    padding: '8px 14px',
+                                    borderRadius: '8px',
+                                    border: '1.5px solid var(--accent-primary)',
+                                    background: 'rgba(255, 255, 255, 0.06)',
+                                    fontSize: '0.88rem',
+                                    color: 'inherit',
                                   }}
                                 />
-                              )}
-                            </div>
-                            <span style={{ fontSize: '0.92rem', color: isSelected ? 'var(--text-primary)' : 'var(--text-secondary)' }}>
-                              {opt.text}
-                            </span>
+                              </div>
+                            )}
                           </div>
                         );
                       })}
@@ -1634,40 +1750,67 @@ function SurveyFormContent({ params }: { params: Promise<{ code: string }> }) {
                         {q.options.map((opt) => {
                           const selectedList: string[] = Array.isArray(currentAnswer) ? currentAnswer : [];
                           const isSelected = selectedList.includes(opt.id);
+                          const hasOtherInput = opt.text.includes('অন্যান্য') || opt.text.toLowerCase().includes('other');
                           return (
-                            <div
-                              key={opt.id}
-                              onClick={() => handleToggleMultiple(q.id, opt.id, q.maxSelections)}
-                              style={{
-                                display: 'flex',
-                                alignItems: 'center',
-                                gap: '12px',
-                                padding: '12px 16px',
-                                borderRadius: '10px',
-                                cursor: 'pointer',
-                                background: isSelected ? 'rgba(99, 102, 241, 0.15)' : 'rgba(255, 255, 255, 0.03)',
-                                border: `1.5px solid ${isSelected ? 'var(--accent-primary)' : 'var(--border-subtle)'}`,
-                                transition: 'all 0.15s ease',
-                              }}
-                            >
+                            <div key={opt.id}>
                               <div
+                                onClick={() => handleToggleMultiple(q.id, opt.id, q.maxSelections)}
                                 style={{
-                                  width: '18px',
-                                  height: '18px',
-                                  borderRadius: '4px',
-                                  border: `2px solid ${isSelected ? 'var(--accent-primary)' : 'var(--text-muted)'}`,
-                                  background: isSelected ? 'var(--accent-primary)' : 'transparent',
                                   display: 'flex',
                                   alignItems: 'center',
-                                  justifyContent: 'center',
-                                  flexShrink: 0,
+                                  gap: '12px',
+                                  padding: '12px 16px',
+                                  borderRadius: '10px',
+                                  cursor: 'pointer',
+                                  background: isSelected ? 'rgba(99, 102, 241, 0.15)' : 'rgba(255, 255, 255, 0.03)',
+                                  border: `1.5px solid ${isSelected ? 'var(--accent-primary)' : 'var(--border-subtle)'}`,
+                                  transition: 'all 0.15s ease',
                                 }}
                               >
-                                {isSelected && <Check size={12} color="#ffffff" strokeWidth={3} />}
+                                <div
+                                  style={{
+                                    width: '18px',
+                                    height: '18px',
+                                    borderRadius: '4px',
+                                    border: `2px solid ${isSelected ? 'var(--accent-primary)' : 'var(--text-muted)'}`,
+                                    background: isSelected ? 'var(--accent-primary)' : 'transparent',
+                                    display: 'flex',
+                                    alignItems: 'center',
+                                    justifyContent: 'center',
+                                    flexShrink: 0,
+                                  }}
+                                >
+                                  {isSelected && <Check size={12} color="#ffffff" strokeWidth={3} />}
+                                </div>
+                                <span style={{ fontSize: '0.92rem', color: isSelected ? 'var(--text-primary)' : 'var(--text-secondary)' }}>
+                                  {opt.text}
+                                </span>
                               </div>
-                              <span style={{ fontSize: '0.92rem', color: isSelected ? 'var(--text-primary)' : 'var(--text-secondary)' }}>
-                                {opt.text}
-                              </span>
+                              {isSelected && hasOtherInput && (
+                                <div style={{ marginTop: '8px', paddingLeft: '30px' }} onClick={(e) => e.stopPropagation()}>
+                                  <input
+                                    type="text"
+                                    value={otherTextAnswers[`${q.id}_${opt.id}`] || ''}
+                                    onChange={(e) => {
+                                      const val = e.target.value;
+                                      setOtherTextAnswers((prev) => ({ ...prev, [`${q.id}_${opt.id}`]: val }));
+                                    }}
+                                    onKeyDown={(e) => {
+                                      if (e.key === 'Enter') e.preventDefault();
+                                    }}
+                                    placeholder={isBanglaQuestion ? 'অন্যান্য বিবরণ বা পণ্যের নাম লিখুন...' : 'Please specify...'}
+                                    style={{
+                                      width: '100%',
+                                      padding: '8px 14px',
+                                      borderRadius: '8px',
+                                      border: '1.5px solid var(--accent-primary)',
+                                      background: 'rgba(255, 255, 255, 0.06)',
+                                      fontSize: '0.88rem',
+                                      color: 'inherit',
+                                    }}
+                                  />
+                                </div>
+                              )}
                             </div>
                           );
                         })}
@@ -1680,7 +1823,15 @@ function SurveyFormContent({ params }: { params: Promise<{ code: string }> }) {
                     <input
                       type="text"
                       value={currentAnswer || ''}
-                      onChange={(e) => handleTextChange(q.id, e.target.value)}
+                      onChange={(e) => {
+                        const val = q.title.includes('ফোন') || q.title.includes('phone') || q.title.includes('mobile') || q.title.includes('নম্বর')
+                          ? normalizeBanglaDigits(e.target.value)
+                          : e.target.value;
+                        handleTextChange(q.id, val);
+                      }}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter') e.preventDefault();
+                      }}
                       placeholder={isBanglaQuestion ? 'এখানে আপনার উত্তর লিখুন...' : 'Your answer...'}
                       style={{
                         width: '100%',
@@ -1834,17 +1985,41 @@ function SurveyFormContent({ params }: { params: Promise<{ code: string }> }) {
                 style={{
                   display: 'flex',
                   alignItems: 'center',
-                  gap: '8px',
+                  justifyContent: 'space-between',
+                  gap: '12px',
                   background: 'rgba(239, 68, 68, 0.12)',
-                  border: '1px solid rgba(239, 68, 68, 0.3)',
+                  border: '1px solid rgba(239, 68, 68, 0.35)',
                   color: '#ef4444',
-                  padding: '12px 16px',
-                  borderRadius: '10px',
-                  fontSize: '0.88rem',
+                  padding: '12px 18px',
+                  borderRadius: '12px',
+                  fontSize: '0.9rem',
+                  flexWrap: 'wrap',
                 }}
               >
-                <AlertCircle size={18} />
-                <span>{submitError}</span>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                  <AlertCircle size={18} style={{ flexShrink: 0 }} />
+                  <span>{submitError}</span>
+                </div>
+                <button
+                  type="button"
+                  onClick={handleExecuteSubmit}
+                  disabled={isSubmitting}
+                  style={{
+                    padding: '8px 16px',
+                    borderRadius: '8px',
+                    background: '#ef4444',
+                    color: '#ffffff',
+                    border: 'none',
+                    fontWeight: 700,
+                    fontSize: '0.85rem',
+                    cursor: 'pointer',
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '6px',
+                  }}
+                >
+                  <RotateCcw size={14} /> {isSurveyBangla ? 'পুনরায় চেষ্টা করুন' : 'Retry Submission'}
+                </button>
               </div>
             )}
 

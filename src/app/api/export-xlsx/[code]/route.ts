@@ -8,21 +8,34 @@ function formatAnswer(q: Question | undefined, rawValue: string): string {
   if (!q || !rawValue) return rawValue || '';
 
   if (q.type === 'mcq' && q.options) {
-    const matched = q.options.find((opt) => opt.id === rawValue);
-    if (matched) return matched.text;
+    const [optId, customText] = rawValue.split(':::');
+    const matched = q.options.find((opt) => opt.id === optId);
+    if (matched) {
+      return customText ? `${matched.text}: ${customText.trim()}` : matched.text;
+    }
   } else if (q.type === 'multiple_choice' && q.options) {
     try {
-      const ids: string[] = JSON.parse(rawValue);
-      if (Array.isArray(ids)) {
-        const labels = ids
-          .map((id) => q.options?.find((opt) => opt.id === id)?.text || id)
+      const items: string[] = JSON.parse(rawValue);
+      if (Array.isArray(items)) {
+        const labels = items
+          .map((item) => {
+            const [optId, customText] = String(item).split(':::');
+            const matched = q.options?.find((opt) => opt.id === optId);
+            if (matched) {
+              return customText ? `${matched.text}: ${customText.trim()}` : matched.text;
+            }
+            return item;
+          })
           .filter(Boolean);
         return labels.join(', ');
       }
     } catch {
       // not JSON array, might be single ID
-      const matched = q.options.find((opt) => opt.id === rawValue);
-      if (matched) return matched.text;
+      const [optId, customText] = rawValue.split(':::');
+      const matched = q.options.find((opt) => opt.id === optId);
+      if (matched) {
+        return customText ? `${matched.text}: ${customText.trim()}` : matched.text;
+      }
     }
   } else if (q.type === 'true_false') {
     if (rawValue === 'true') return 'True';

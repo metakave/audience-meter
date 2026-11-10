@@ -10,6 +10,95 @@ import {
 import { DEFAULT_PRESENTATIONS } from './default-data';
 
 const LOCAL_STORAGE_KEY_PREFIX = 'audiencemeter_';
+const PENDING_SURVEYS_KEY = 'audiencemeter_pending_surveys';
+
+/**
+ * Normalizes Bangla numerals (০-৯) to standard Western digits (0-9)
+ */
+export function normalizeBanglaDigits(str: string): string {
+  if (!str) return '';
+  const banglaDigits = ['০', '১', '২', '৩', '৪', '৫', '৬', '৭', '৮', '৯'];
+  return str.replace(/[০-৯]/g, (d) => {
+    const idx = banglaDigits.indexOf(d);
+    return idx !== -1 ? String(idx) : d;
+  });
+}
+
+export interface PendingSurveyItem {
+  id: string;
+  participant: Participant;
+  submissions: ResponseSubmission[];
+  roomCode: string;
+  presentation?: Presentation;
+  createdAt: number;
+}
+
+export function getPendingSurveys(): PendingSurveyItem[] {
+  if (typeof window === 'undefined') return [];
+  try {
+    const raw = localStorage.getItem(PENDING_SURVEYS_KEY);
+    return raw ? JSON.parse(raw) : [];
+  } catch {
+    return [];
+  }
+}
+
+export function savePendingSurvey(item: PendingSurveyItem) {
+  if (typeof window === 'undefined') return;
+  try {
+    const existing = getPendingSurveys();
+    const filtered = existing.filter((p) => p.id !== item.id);
+    filtered.push(item);
+    localStorage.setItem(PENDING_SURVEYS_KEY, JSON.stringify(filtered));
+  } catch {}
+}
+
+export function removePendingSurvey(id: string) {
+  if (typeof window === 'undefined') return;
+  try {
+    const existing = getPendingSurveys();
+    const updated = existing.filter((p) => p.id !== id);
+    if (updated.length === 0) {
+      localStorage.removeItem(PENDING_SURVEYS_KEY);
+    } else {
+      localStorage.setItem(PENDING_SURVEYS_KEY, JSON.stringify(updated));
+    }
+  } catch {}
+}
+
+/**
+ * Flushes any pending offline surveys to the server
+ */
+export async function flushPendingSurveys(): Promise<number> {
+  if (typeof window === 'undefined') return 0;
+  const pending = getPendingSurveys();
+  if (pending.length === 0) return 0;
+
+  let flushedCount = 0;
+  for (const item of pending) {
+    try {
+      const res = await fetch('/api/sync', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          action: 'submit_survey',
+          code: item.roomCode,
+          participant: item.participant,
+          submissions: item.submissions,
+          presentation: item.presentation,
+        }),
+      });
+      if (res.ok) {
+        removePendingSurvey(item.id);
+        flushedCount++;
+      }
+    } catch {
+      // Still offline, stop loop
+      break;
+    }
+  }
+  return flushedCount;
+}
 
 export function getLocalParticipant(): { firstName: string; lastName: string; whatsapp: string; email: string } | null {
   if (typeof window === 'undefined') return null;
@@ -329,7 +418,23 @@ export async function submitSurvey(
   roomCode: string,
   presentation?: Presentation
 ): Promise<boolean> {
-  // 1. Instant client backup to localStorage FIRST (never lose data on crash or reload)
+  // Normalize participant input fields
+  participant.firstName = (participant.firstName || '').trim();
+  participant.lastName = (participant.lastName || '').trim();
+  participant.whatsapp = normalizeBanglaDigits((participant.whatsapp || '').trim());
+  participant.email = (participant.email || '').trim().toLowerCase();
+
+  // 1. Instant client backup & Offline Queue FIRST (guarantees zero data loss on crash or network loss)
+  const pendingItem: PendingSurveyItem = {
+    id: participant.id,
+    participant,
+    submissions,
+    roomCode,
+    presentation,
+    createdAt: Date.now(),
+  };
+  savePendingSurvey(pendingItem);
+
   if (typeof window !== 'undefined') {
     try {
       const backupKey = `audiencemeter_survey_submissions_${roomCode}`;
@@ -345,8 +450,9 @@ export async function submitSurvey(
 
   const supabase = getSupabase();
   let supabaseSuccess = false;
+  let apiSuccess = false;
 
-  // 2. Direct Supabase write with strict timeout & circuit breaker
+  // 2. Direct Supabase write with generous timeout (4500ms) & circuit breaker
   if (isSupabaseConfigured && supabase && isSupabaseHealthy()) {
     try {
       await withTimeout(
@@ -437,32 +543,50 @@ export async function submitSurvey(
             supabaseSuccess = true;
           }
         })(),
-        2200
+        4500
       );
-      reportSupabaseSuccess();
+      if (supabaseSuccess) {
+        reportSupabaseSuccess();
+      }
     } catch (e) {
       reportSupabaseFailure();
       console.warn('Supabase survey batch submit failed on client:', e);
     }
   }
 
-  // 3. Fallback to API sync (ensures server holds the responses)
-  try {
-    const res = await fetch('/api/sync', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        action: 'submit_survey',
-        code: roomCode,
-        participant,
-        submissions,
-        presentation,
-      }),
-    });
-    return res.ok || supabaseSuccess;
-  } catch {
-    return supabaseSuccess || true;
+  // 3. Fallback / Sync to API endpoint with automatic retry (up to 2 retries)
+  for (let attempt = 1; attempt <= 2; attempt++) {
+    try {
+      const res = await fetch('/api/sync', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          action: 'submit_survey',
+          code: roomCode,
+          participant,
+          submissions,
+          presentation,
+        }),
+      });
+      if (res.ok) {
+        apiSuccess = true;
+        break;
+      }
+    } catch (err) {
+      if (attempt === 1) {
+        await new Promise((r) => setTimeout(r, 600));
+      }
+    }
   }
+
+  // 4. If either Supabase or API sync succeeded, pop from offline queue
+  if (supabaseSuccess || apiSuccess) {
+    removePendingSurvey(participant.id);
+    return true;
+  }
+
+  // If both failed, keep in offline queue so background sync can flush it when online
+  return false;
 }
 
 /**
@@ -732,7 +856,10 @@ export function aggregateQuestionResults(
 
     responses.forEach((r) => {
       if (question.type === 'mcq') {
-        if (counts[r.value] !== undefined) {
+        const optId = r.value ? r.value.split(':::')[0] : '';
+        if (counts[optId] !== undefined) {
+          counts[optId]++;
+        } else if (counts[r.value] !== undefined) {
           counts[r.value]++;
         }
       } else {
@@ -740,12 +867,22 @@ export function aggregateQuestionResults(
         try {
           const ids: string[] = JSON.parse(r.value);
           if (Array.isArray(ids)) {
-            ids.forEach((id) => {
-              if (counts[id] !== undefined) counts[id]++;
+            ids.forEach((item) => {
+              const optId = String(item).split(':::')[0];
+              if (counts[optId] !== undefined) {
+                counts[optId]++;
+              } else if (counts[item] !== undefined) {
+                counts[item]++;
+              }
             });
           }
         } catch {
-          if (counts[r.value] !== undefined) counts[r.value]++;
+          const optId = r.value ? r.value.split(':::')[0] : '';
+          if (counts[optId] !== undefined) {
+            counts[optId]++;
+          } else if (counts[r.value] !== undefined) {
+            counts[r.value]++;
+          }
         }
       }
     });
