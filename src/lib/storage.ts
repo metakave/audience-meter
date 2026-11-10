@@ -228,16 +228,18 @@ export async function registerParticipant(participant: Participant): Promise<boo
   const supabase = getSupabase();
   if (isSupabaseConfigured && supabase) {
     try {
-      await supabase.from('participants').upsert({
-        id: participant.id,
-        presentation_id: participant.presentationId,
-        room_code: participant.roomCode,
-        first_name: participant.firstName,
-        last_name: participant.lastName,
-        whatsapp: participant.whatsapp,
-        email: participant.email,
-        joined_at: participant.joinedAt,
-      });
+      if (participant.presentationId && participant.presentationId !== 'demo') {
+        await supabase.from('participants').upsert({
+          id: participant.id,
+          presentation_id: participant.presentationId,
+          room_code: participant.roomCode,
+          first_name: participant.firstName,
+          last_name: participant.lastName || '',
+          whatsapp: participant.whatsapp,
+          email: participant.email,
+          joined_at: participant.joinedAt,
+        });
+      }
     } catch (e) {
       console.warn('Supabase participant upsert failed:', e);
     }
@@ -268,22 +270,19 @@ export async function submitResponse(submission: ResponseSubmission, roomCode: s
 
   if (isSupabaseConfigured && supabase && isSupabaseHealthy()) {
     try {
+      const respPayload: any = {
+        id: submission.id,
+        presentation_id: submission.presentationId,
+        question_id: submission.questionId,
+        participant_id: submission.participantId,
+        participant_name: submission.participantName || '',
+        participant_whatsapp: submission.participantWhatsapp || '',
+        participant_email: submission.participantEmail || '',
+        value: submission.value,
+        created_at: submission.createdAt || new Date().toISOString(),
+      };
       const { error } = await withTimeout(
-        supabase.from('responses').upsert(
-          {
-            id: submission.id,
-            presentation_id: submission.presentationId,
-            room_code: roomCode,
-            question_id: submission.questionId,
-            participant_id: submission.participantId,
-            participant_name: submission.participantName,
-            participant_whatsapp: submission.participantWhatsapp,
-            participant_email: submission.participantEmail,
-            value: submission.value,
-            created_at: submission.createdAt,
-          },
-          { onConflict: 'id' }
-        ),
+        supabase.from('responses').upsert(respPayload, { onConflict: 'id' }),
         1800
       );
       if (!error) {
@@ -291,6 +290,7 @@ export async function submitResponse(submission: ResponseSubmission, roomCode: s
         reportSupabaseSuccess();
       } else {
         reportSupabaseFailure();
+        console.warn('Supabase response upsert error:', error);
       }
     } catch (e) {
       reportSupabaseFailure();
@@ -418,7 +418,6 @@ export async function submitSurvey(
             const rows = submissions.map((s) => ({
               id: s.id,
               presentation_id: targetPresId,
-              room_code: roomCode,
               question_id: s.questionId,
               participant_id: s.participantId,
               participant_name: s.participantName,
@@ -634,11 +633,13 @@ export async function fetchResponses(presentationId: string, roomCode: string): 
   const supabase = getSupabase();
   if (isSupabaseConfigured && supabase) {
     try {
+      const targetIds = presentationId === roomCode ? [roomCode] : [presentationId, roomCode];
       const { data, error } = await supabase
         .from('responses')
         .select('*')
-        .eq('presentation_id', presentationId);
-      if (data && !error) {
+        .in('presentation_id', targetIds)
+        .order('created_at', { ascending: false });
+      if (data && !error && data.length > 0) {
         return data.map((r: any) => ({
           id: r.id,
           presentationId: r.presentation_id,
@@ -661,6 +662,46 @@ export async function fetchResponses(presentationId: string, roomCode: string): 
     if (res.ok) {
       const json = await res.json();
       return json.responses || [];
+    }
+  } catch {}
+  return [];
+}
+
+/**
+ * Fetch all participants for a presentation
+ */
+export async function fetchParticipants(presentationId: string, roomCode: string): Promise<Participant[]> {
+  const supabase = getSupabase();
+  if (isSupabaseConfigured && supabase) {
+    try {
+      const targetIds = presentationId === roomCode ? [roomCode] : [presentationId, roomCode];
+      const { data, error } = await supabase
+        .from('participants')
+        .select('*')
+        .or(`presentation_id.in.(${targetIds.join(',')}),room_code.eq.${roomCode}`)
+        .order('joined_at', { ascending: false });
+      if (data && !error && data.length > 0) {
+        return data.map((p: any) => ({
+          id: p.id,
+          presentationId: p.presentation_id,
+          roomCode: p.room_code || roomCode,
+          firstName: p.first_name,
+          lastName: p.last_name || '',
+          whatsapp: p.whatsapp || '',
+          email: p.email || '',
+          joinedAt: p.joined_at,
+        }));
+      }
+    } catch (e) {
+      console.warn('Supabase fetch participants failed:', e);
+    }
+  }
+
+  try {
+    const res = await fetch(`/api/sync?code=${encodeURIComponent(roomCode)}`);
+    if (res.ok) {
+      const json = await res.json();
+      return json.participants || [];
     }
   } catch {}
   return [];

@@ -3,6 +3,7 @@
 import React, { useEffect, useState, use, Suspense, useCallback } from 'react';
 import {
   fetchPresentation,
+  fetchPresentationBundle,
   getLocalParticipant,
   saveLocalParticipant,
   registerParticipant,
@@ -293,10 +294,21 @@ function ParticipantJoinContent({
     };
     saveLocalParticipant(profile);
 
+    let targetPresId = presentation?.id;
+    if (!targetPresId || targetPresId === 'demo') {
+      try {
+        const bundle = await fetchPresentationBundle(code);
+        if (bundle.presentation?.id) {
+          targetPresId = bundle.presentation.id;
+          setPresentation(bundle.presentation);
+        }
+      } catch {}
+    }
+
     const participantId = `${code}_${profile.whatsapp.replace(/\D/g, '')}_${Date.now()}`;
     const newParticipant: Participant = {
       id: participantId,
-      presentationId: presentation?.id || 'demo',
+      presentationId: targetPresId || code,
       roomCode: code,
       ...profile,
       joinedAt: new Date().toISOString(),

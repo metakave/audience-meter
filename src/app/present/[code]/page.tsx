@@ -4,11 +4,12 @@ import React, { useEffect, useState, use, Suspense } from 'react';
 import {
   fetchPresentation,
   fetchResponses,
+  fetchParticipants,
   fetchPresentationBundle,
   aggregateQuestionResults,
   updatePresentationState,
 } from '@/lib/storage';
-import { Presentation, ResponseSubmission, AggregatedResults } from '@/types';
+import { Presentation, ResponseSubmission, AggregatedResults, Participant } from '@/types';
 import { getSupabase, isSupabaseConfigured } from '@/lib/supabase';
 import ChartBar from '@/components/ChartBar';
 import InteractiveChart, { ChartOptionItem } from '@/components/InteractiveChart';
@@ -22,6 +23,7 @@ import {
   ChevronRight,
   QrCode,
   Users,
+  BarChart2,
   Lock,
   Unlock,
   Eye,
@@ -37,6 +39,10 @@ import {
   Sparkles,
   MessageSquare,
   FileSpreadsheet,
+  X,
+  Phone,
+  Mail,
+  Clock,
 } from 'lucide-react';
 
 function PresenterLiveContent({
@@ -48,8 +54,10 @@ function PresenterLiveContent({
 
   const [presentation, setPresentation] = useState<Presentation | null>(null);
   const [responses, setResponses] = useState<ResponseSubmission[]>([]);
+  const [participants, setParticipants] = useState<Participant[]>([]);
   const [loading, setLoading] = useState(true);
   const [isQrOpen, setIsQrOpen] = useState(false);
+  const [isAttendeesOpen, setIsAttendeesOpen] = useState(false);
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [originUrl, setOriginUrl] = useState('');
 
@@ -64,7 +72,8 @@ function PresenterLiveContent({
       const bundle = await fetchPresentationBundle(code);
       if (bundle.presentation) {
         setPresentation(bundle.presentation);
-        setResponses(bundle.responses);
+        setResponses(bundle.responses || []);
+        setParticipants(bundle.participants || []);
       }
       setLoading(false);
     }
@@ -83,45 +92,86 @@ function PresenterLiveContent({
         .channel(`present_channel_${code}`)
         .on(
           'postgres_changes',
-          { event: '*', schema: 'public', table: 'responses', filter: `presentation_id=eq.${presentation.id}` },
+          { event: '*', schema: 'public', table: 'responses' },
           (payload: any) => {
-            if (payload.eventType === 'DELETE' && payload.old) {
-              setResponses((prev) => prev.filter((r) => r.id !== payload.old.id));
-            } else if (payload.new) {
-              const incoming: ResponseSubmission = {
-                id: payload.new.id,
-                presentationId: payload.new.presentation_id,
-                questionId: payload.new.question_id,
-                participantId: payload.new.participant_id,
-                participantName: payload.new.participant_name,
-                participantWhatsapp: payload.new.participant_whatsapp,
-                participantEmail: payload.new.participant_email,
-                value: payload.new.value,
-                createdAt: payload.new.created_at,
-              };
+            const pid = payload.new?.presentation_id || payload.old?.presentation_id;
+            const rcode = payload.new?.room_code || payload.old?.room_code;
+            if (pid === presentation.id || pid === code || rcode === code) {
+              if (payload.eventType === 'DELETE' && payload.old) {
+                setResponses((prev) => prev.filter((r) => r.id !== payload.old.id));
+              } else if (payload.new) {
+                const incoming: ResponseSubmission = {
+                  id: payload.new.id,
+                  presentationId: payload.new.presentation_id,
+                  questionId: payload.new.question_id,
+                  participantId: payload.new.participant_id,
+                  participantName: payload.new.participant_name,
+                  participantWhatsapp: payload.new.participant_whatsapp,
+                  participantEmail: payload.new.participant_email,
+                  value: payload.new.value,
+                  createdAt: payload.new.created_at,
+                };
 
-              setResponses((prev) => {
-                const existingIdx = prev.findIndex((r) => r.id === incoming.id);
-                if (existingIdx >= 0) {
-                  const updated = [...prev];
-                  updated[existingIdx] = incoming;
-                  return updated;
-                }
-                return [...prev, incoming];
-              });
+                setResponses((prev) => {
+                  const existingIdx = prev.findIndex((r) => r.id === incoming.id);
+                  if (existingIdx >= 0) {
+                    const updated = [...prev];
+                    updated[existingIdx] = incoming;
+                    return updated;
+                  }
+                  return [...prev, incoming];
+                });
+              }
+            }
+          }
+        )
+        .on(
+          'postgres_changes',
+          { event: '*', schema: 'public', table: 'participants' },
+          (payload: any) => {
+            const pid = payload.new?.presentation_id || payload.old?.presentation_id;
+            const rcode = payload.new?.room_code || payload.old?.room_code;
+            if (pid === presentation.id || pid === code || rcode === code) {
+              if (payload.eventType === 'DELETE' && payload.old) {
+                setParticipants((prev) => prev.filter((p) => p.id !== payload.old.id));
+              } else if (payload.new) {
+                const incoming: Participant = {
+                  id: payload.new.id,
+                  presentationId: payload.new.presentation_id,
+                  roomCode: payload.new.room_code || code,
+                  firstName: payload.new.first_name,
+                  lastName: payload.new.last_name || '',
+                  whatsapp: payload.new.whatsapp || '',
+                  email: payload.new.email || '',
+                  joinedAt: payload.new.joined_at,
+                };
+
+                setParticipants((prev) => {
+                  const existingIdx = prev.findIndex((p) => p.id === incoming.id);
+                  if (existingIdx >= 0) {
+                    const updated = [...prev];
+                    updated[existingIdx] = incoming;
+                    return updated;
+                  }
+                  return [incoming, ...prev];
+                });
+              }
             }
           }
         )
         .subscribe();
     }
 
-    // Adaptive fallback polling (relaxed if WebSocket is connected, avoiding excessive re-renders)
-    const pollIntervalTime = isSupabaseConfigured ? 3500 : 1500;
+    // Adaptive fallback polling (both responses and participants)
+    const pollIntervalTime = isSupabaseConfigured ? 3000 : 1500;
     const pollInterval = setInterval(async () => {
       try {
-        const resps = await fetchResponses(presentation.id, code);
+        const [resps, parts] = await Promise.all([
+          fetchResponses(presentation.id, code),
+          fetchParticipants(presentation.id, code),
+        ]);
+
         setResponses((prev) => {
-          // Avoid triggering re-renders if length and responses haven't changed
           if (prev.length === resps.length) {
             let changed = false;
             for (let i = 0; i < prev.length; i++) {
@@ -133,6 +183,20 @@ function PresenterLiveContent({
             if (!changed) return prev;
           }
           return resps;
+        });
+
+        setParticipants((prev) => {
+          if (prev.length === parts.length) {
+            let changed = false;
+            for (let i = 0; i < prev.length; i++) {
+              if (prev[i].id !== parts[i].id) {
+                changed = true;
+                break;
+              }
+            }
+            if (!changed) return prev;
+          }
+          return parts;
         });
       } catch {}
     }, pollIntervalTime);
@@ -353,23 +417,49 @@ function PresenterLiveContent({
             <Radio size={14} className="pulse-dot" /> Live
           </div>
 
+          {/* Live Participants Joined Badge (Clickable) */}
+          <button
+            onClick={() => setIsAttendeesOpen(true)}
+            style={{
+              display: 'inline-flex',
+              alignItems: 'center',
+              gap: '7px',
+              padding: '6px 14px',
+              borderRadius: '9999px',
+              background: 'rgba(16, 185, 129, 0.12)',
+              border: '1px solid rgba(16, 185, 129, 0.35)',
+              color: '#34d399',
+              fontSize: '0.9rem',
+              fontWeight: 700,
+              cursor: 'pointer',
+              transition: 'all 0.2s ease',
+            }}
+            title={`${participants.length} participants connected. Click to view roster.`}
+          >
+            <Users size={15} />
+            <span>{participants.length}</span>
+            <span style={{ fontWeight: 500, fontSize: '0.8rem', opacity: 0.85 }}>joined</span>
+          </button>
+
+          {/* Voted on this Slide Badge */}
           <div
             style={{
               display: 'inline-flex',
               alignItems: 'center',
-              gap: '8px',
-              padding: '6px 16px',
+              gap: '7px',
+              padding: '6px 14px',
               borderRadius: '9999px',
               background: 'rgba(99, 102, 241, 0.12)',
-              border: '1px solid rgba(99, 102, 241, 0.3)',
+              border: '1px solid rgba(99, 102, 241, 0.35)',
               color: '#a5b4fc',
-              fontSize: '0.95rem',
+              fontSize: '0.9rem',
               fontWeight: 700,
             }}
+            title={`${aggregated?.totalResponses ?? 0} answers received for current question`}
           >
-            <Users size={16} />
+            <BarChart2 size={15} />
             <span>{aggregated?.totalResponses ?? 0}</span>
-            <span style={{ fontWeight: 400, fontSize: '0.8rem', opacity: 0.8 }}>responses</span>
+            <span style={{ fontWeight: 500, fontSize: '0.8rem', opacity: 0.85 }}>voted</span>
           </div>
 
           <ThemeToggle />
@@ -772,6 +862,171 @@ function PresenterLiveContent({
 
       {/* QR Code Presentation Modal */}
       <QRCodeModal isOpen={isQrOpen} onClose={() => setIsQrOpen(false)} roomCode={code} />
+
+      {/* Live Attendees Roster Modal */}
+      {isAttendeesOpen && (
+        <div
+          style={{
+            position: 'fixed',
+            inset: 0,
+            backgroundColor: 'rgba(0, 0, 0, 0.75)',
+            backdropFilter: 'blur(8px)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            zIndex: 99999,
+            padding: '20px',
+          }}
+          onClick={() => setIsAttendeesOpen(false)}
+        >
+          <div
+            className="glass-panel"
+            style={{
+              maxWidth: '540px',
+              width: '100%',
+              maxHeight: '80vh',
+              display: 'flex',
+              flexDirection: 'column',
+              borderRadius: '24px',
+              border: '1px solid var(--border-color)',
+              overflow: 'hidden',
+              boxShadow: '0 25px 50px -12px rgba(0, 0, 0, 0.5)',
+            }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            {/* Modal Header */}
+            <div
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'space-between',
+                padding: '20px 24px',
+                borderBottom: '1px solid var(--border-color)',
+              }}
+            >
+              <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                <div
+                  style={{
+                    width: '38px',
+                    height: '38px',
+                    borderRadius: '12px',
+                    background: 'rgba(16, 185, 129, 0.15)',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    color: '#34d399',
+                  }}
+                >
+                  <Users size={20} />
+                </div>
+                <div>
+                  <h3 style={{ fontSize: '1.15rem', fontWeight: 700, margin: 0, color: 'var(--text-primary)' }}>
+                    Connected Participants
+                  </h3>
+                  <span style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>
+                    {participants.length} joined room #{code}
+                  </span>
+                </div>
+              </div>
+              <button
+                onClick={() => setIsAttendeesOpen(false)}
+                style={{
+                  background: 'none',
+                  border: 'none',
+                  color: 'var(--text-muted)',
+                  cursor: 'pointer',
+                  padding: '6px',
+                  borderRadius: '8px',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                }}
+              >
+                <X size={20} />
+              </button>
+            </div>
+
+            {/* Modal Body - Attendee List */}
+            <div
+              style={{
+                flex: 1,
+                overflowY: 'auto',
+                padding: '16px 24px',
+                display: 'flex',
+                flexDirection: 'column',
+                gap: '8px',
+              }}
+            >
+              {participants.length === 0 ? (
+                <div
+                  style={{
+                    textAlign: 'center',
+                    padding: '48px 0',
+                    color: 'var(--text-muted)',
+                    fontSize: '0.95rem',
+                  }}
+                >
+                  No participants have joined yet.
+                  <br />
+                  <span style={{ fontSize: '0.85rem', opacity: 0.8 }}>
+                    Share the room code or QR code to allow participants to join.
+                  </span>
+                </div>
+              ) : (
+                participants.map((p, idx) => (
+                  <div
+                    key={p.id || idx}
+                    style={{
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'space-between',
+                      padding: '12px 16px',
+                      borderRadius: '12px',
+                      background: 'rgba(255, 255, 255, 0.03)',
+                      border: '1px solid var(--border-color)',
+                    }}
+                  >
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                      <div
+                        style={{
+                          width: '34px',
+                          height: '34px',
+                          borderRadius: '50%',
+                          background: 'linear-gradient(135deg, #6366f1, #8b5cf6)',
+                          display: 'flex',
+                          alignItems: 'center',
+                          justifyContent: 'center',
+                          fontWeight: 700,
+                          fontSize: '0.85rem',
+                          color: '#fff',
+                        }}
+                      >
+                        {(p.firstName || 'P').charAt(0).toUpperCase()}
+                      </div>
+                      <div>
+                        <div style={{ fontWeight: 600, fontSize: '0.95rem', color: 'var(--text-primary)' }}>
+                          {p.firstName} {p.lastName}
+                        </div>
+                        {p.whatsapp && (
+                          <div style={{ fontSize: '0.78rem', color: 'var(--text-muted)', display: 'flex', alignItems: 'center', gap: '4px' }}>
+                            <Phone size={12} /> {p.whatsapp}
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                    {p.joinedAt && (
+                      <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', display: 'flex', alignItems: 'center', gap: '4px' }}>
+                        <Clock size={12} />
+                        {new Date(p.joinedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                      </div>
+                    )}
+                  </div>
+                ))
+              )}
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
