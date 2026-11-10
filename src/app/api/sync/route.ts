@@ -190,7 +190,15 @@ export async function GET(req: NextRequest) {
               id: p.id,
               title: p.title,
               code: p.code,
-              type: p.type || (p.id?.startsWith('survey_') ? 'survey' : 'presentation'),
+              type:
+                p.type === 'survey' ||
+                p.id?.startsWith('survey_') ||
+                p.id?.includes('survey') ||
+                p.id?.includes('assessment') ||
+                p.id?.includes('poll') ||
+                Boolean(p.survey_settings || p.surveySettings)
+                  ? 'survey'
+                  : 'presentation',
               description: p.description || '',
               surveySettings: p.survey_settings || p.surveySettings || undefined,
               currentQuestionIndex: p.current_question_index,
@@ -314,7 +322,15 @@ export async function GET(req: NextRequest) {
           id: pData.id,
           title: pData.title,
           code: pData.code,
-          type: pData.type || (pData.id?.startsWith('survey_') ? 'survey' : 'presentation'),
+          type:
+            pData.type === 'survey' ||
+            pData.id?.startsWith('survey_') ||
+            pData.id?.includes('survey') ||
+            pData.id?.includes('assessment') ||
+            pData.id?.includes('poll') ||
+            Boolean(pData.survey_settings || pData.surveySettings)
+              ? 'survey'
+              : 'presentation',
           description: pData.description || '',
           surveySettings: pData.survey_settings || pData.surveySettings || undefined,
           currentQuestionIndex: pData.current_question_index,
