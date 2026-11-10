@@ -813,6 +813,25 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ success: true, debug: debugError });
     }
 
+    if (action === 'delete_entry') {
+      const participantId = body.participantId;
+      const responseId = body.responseId;
+      if (isSupabaseConfigured && supabase) {
+        try {
+          if (responseId) await supabase.from('responses').delete().eq('id', responseId);
+          if (participantId) await supabase.from('participants').delete().eq('id', participantId);
+        } catch {}
+      }
+      if (participantId && store.participants[code]) {
+        store.participants[code] = store.participants[code].filter((p: any) => p.id !== participantId);
+      }
+      if (responseId && store.responses[code]) {
+        store.responses[code] = store.responses[code].filter((r: any) => r.id !== responseId);
+      }
+      saveStoreData(store);
+      return NextResponse.json({ success: true });
+    }
+
     if (action === 'delete_presentation') {
       let id = body.id;
       if (isSupabaseConfigured && supabase) {
