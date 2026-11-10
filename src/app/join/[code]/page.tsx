@@ -1,15 +1,17 @@
 'use client';
 
-import React, { useEffect, useState, use, Suspense, useCallback } from 'react';
+import React, { useEffect, useState, use, Suspense, useCallback, useRef } from 'react';
 import {
   fetchPresentation,
   fetchPresentationBundle,
+  fetchResponses,
+  aggregateQuestionResults,
   getLocalParticipant,
   saveLocalParticipant,
   registerParticipant,
   submitResponse,
 } from '@/lib/storage';
-import { Presentation, Participant, ResponseSubmission, Question } from '@/types';
+import { Presentation, Participant, ResponseSubmission, Question, AggregatedResults } from '@/types';
 import { getSupabase, isSupabaseConfigured } from '@/lib/supabase';
 import {
   CheckCircle2,
@@ -44,11 +46,13 @@ function ParticipantJoinContent({
   const [loading, setLoading] = useState(true);
   const [presentation, setPresentation] = useState<Presentation | null>(null);
   const [participant, setParticipant] = useState<Participant | null>(null);
+  const [responses, setResponses] = useState<ResponseSubmission[]>([]);
 
   // Self-Paced Navigation state
   const [activeSlideIndex, setActiveSlideIndex] = useState<number>(0);
   const [userNavigatedManually, setUserNavigatedManually] = useState<boolean>(false);
   const [answeredQuestionIds, setAnsweredQuestionIds] = useState<Set<string>>(new Set());
+  const prevHostIndexRef = useRef<number>(0);
 
   // Registration Form State
   const [firstName, setFirstName] = useState('');
@@ -72,9 +76,23 @@ function ParticipantJoinContent({
   useEffect(() => {
     async function loadData() {
       setLoading(true);
-      const pres = await fetchPresentation(code);
-      setPresentation(pres);
+      const bundle = await fetchPresentationBundle(code);
+      if (bundle.presentation) {
+        setPresentation(bundle.presentation);
+        setResponses(bundle.responses || []);
+        prevHostIndexRef.current = bundle.presentation.currentQuestionIndex || 0;
+        setActiveSlideIndex(bundle.presentation.currentQuestionIndex || 0);
+      } else {
+        const pres = await fetchPresentation(code);
+        setPresentation(pres);
+        if (pres) {
+          prevHostIndexRef.current = pres.currentQuestionIndex || 0;
+          setActiveSlideIndex(pres.currentQuestionIndex || 0);
+          fetchResponses(pres.id, code).then(setResponses).catch(() => {});
+        }
+      }
 
+      const pres = bundle.presentation;
       const saved = getLocalParticipant();
       if (saved && saved.firstName && saved.whatsapp) {
         setFirstName(saved.firstName);
@@ -103,11 +121,17 @@ function ParticipantJoinContent({
     loadData();
   }, [code]);
 
-  // Synchronize initial question index if user hasn't manually chosen a question
+  // Synchronize when presenter changes slides (automatically follow host unless locked)
   useEffect(() => {
-    if (presentation && !userNavigatedManually) {
-      const idx = typeof presentation.currentQuestionIndex === 'number' ? presentation.currentQuestionIndex : 0;
-      setActiveSlideIndex(idx);
+    if (presentation) {
+      const hostIdx = typeof presentation.currentQuestionIndex === 'number' ? presentation.currentQuestionIndex : 0;
+      if (prevHostIndexRef.current !== hostIdx) {
+        prevHostIndexRef.current = hostIdx;
+        setUserNavigatedManually(false);
+        setActiveSlideIndex(hostIdx);
+      } else if (!userNavigatedManually) {
+        setActiveSlideIndex(hostIdx);
+      }
     }
   }, [presentation?.currentQuestionIndex, userNavigatedManually]);
 
@@ -167,6 +191,40 @@ function ParticipantJoinContent({
                 }
               }
             )
+            .on(
+              'postgres_changes',
+              { event: '*', schema: 'public', table: 'responses' },
+              (payload: any) => {
+                const pid = payload.new?.presentation_id || payload.old?.presentation_id;
+                const rcode = payload.new?.room_code || payload.old?.room_code;
+                if (pid === presentation.id || pid === code || rcode === code) {
+                  if (payload.eventType === 'DELETE' && payload.old) {
+                    setResponses((prev) => prev.filter((r) => r.id !== payload.old.id));
+                  } else if (payload.new) {
+                    const incoming: ResponseSubmission = {
+                      id: payload.new.id,
+                      presentationId: payload.new.presentation_id,
+                      questionId: payload.new.question_id,
+                      participantId: payload.new.participant_id,
+                      participantName: payload.new.participant_name,
+                      participantWhatsapp: payload.new.participant_whatsapp,
+                      participantEmail: payload.new.participant_email,
+                      value: payload.new.value,
+                      createdAt: payload.new.created_at,
+                    };
+                    setResponses((prev) => {
+                      const idx = prev.findIndex((r) => r.id === incoming.id);
+                      if (idx >= 0) {
+                        const u = [...prev];
+                        u[idx] = incoming;
+                        return u;
+                      }
+                      return [...prev, incoming];
+                    });
+                  }
+                }
+              }
+            )
             .subscribe((status: string) => {
               // Automatically reconnect on websocket drop, token expiry, or network blip
               if (status === 'TIMED_OUT' || status === 'CLOSED' || status === 'CHANNEL_ERROR') {
@@ -182,10 +240,13 @@ function ParticipantJoinContent({
     initSubscription();
 
     // Secondary HTTP Polling Heartbeat (Guarantees infinite connection without timeouts)
-    const pollIntervalTime = 3800;
+    const pollIntervalTime = 3000;
     const pollInterval = setInterval(async () => {
       try {
-        const pres = await fetchPresentation(code);
+        const [pres, resps] = await Promise.all([
+          fetchPresentation(code),
+          fetchResponses(presentation.id, code),
+        ]);
         if (pres) {
           setPresentation((prev) => {
             if (
@@ -201,6 +262,9 @@ function ParticipantJoinContent({
             return prev;
           });
         }
+        if (resps && resps.length > 0) {
+          setResponses(resps);
+        }
       } catch {}
     }, pollIntervalTime);
 
@@ -209,8 +273,12 @@ function ParticipantJoinContent({
       if (document.visibilityState === 'visible') {
         try {
           initSubscription();
-          const pres = await fetchPresentation(code);
+          const [pres, resps] = await Promise.all([
+            fetchPresentation(code),
+            fetchResponses(presentation.id, code),
+          ]);
           if (pres) setPresentation(pres);
+          if (resps.length > 0) setResponses(resps);
         } catch {}
       }
     };
@@ -232,6 +300,9 @@ function ParticipantJoinContent({
   const totalQuestions = presentation?.questions?.length || 0;
   const safeIndex = Math.max(0, Math.min(activeSlideIndex, totalQuestions - 1));
   const currentQuestion: Question | undefined = presentation?.questions?.[safeIndex];
+  const aggregated: AggregatedResults | null = currentQuestion
+    ? aggregateQuestionResults(currentQuestion, responses)
+    : null;
 
   // Forward Navigation lock check
   const isForwardLocked = Boolean(
@@ -1428,6 +1499,102 @@ function ParticipantJoinContent({
                   <span>1 = Lowest</span>
                   <span>5 = Outstanding</span>
                 </div>
+              </div>
+            )}
+
+            {/* Live Real-time Results Breakdown on Participant Screen */}
+            {isAnswered && presentation.showResults !== false && (
+              <div
+                style={{
+                  marginTop: '22px',
+                  padding: '18px 20px',
+                  borderRadius: '14px',
+                  border: '1px solid rgba(99, 102, 241, 0.35)',
+                  background: 'rgba(99, 102, 241, 0.08)',
+                }}
+              >
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '14px' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px', color: '#10b981', fontWeight: 700, fontSize: '0.88rem' }}>
+                    <CheckCircle2 size={16} /> Live Real-Time Results
+                  </div>
+                  <div style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>
+                    {aggregated?.totalResponses ?? 0} {aggregated?.totalResponses === 1 ? 'response' : 'responses'}
+                  </div>
+                </div>
+
+                {/* MCQ / Multiple Choice Option Bars */}
+                {(currentQuestion.type === 'mcq' || currentQuestion.type === 'multiple_choice') && currentQuestion.options && (
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+                    {currentQuestion.options.map((opt, idx) => {
+                      const voteCount = aggregated?.optionCounts?.[opt.id] ?? 0;
+                      const total = aggregated?.totalResponses ?? 0;
+                      const percent = total > 0 ? Math.round((voteCount / total) * 100) : 0;
+                      const isUserChoice =
+                        selectedOption === opt.id ||
+                        selectedMultiple.includes(opt.id);
+
+                      return (
+                        <div key={opt.id} style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                          <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.85rem' }}>
+                            <span style={{ fontWeight: isUserChoice ? 700 : 500, color: isUserChoice ? '#a5b4fc' : 'inherit' }}>
+                              {isUserChoice && '✓ '} {String.fromCharCode(65 + idx)}. {opt.text}
+                            </span>
+                            <span style={{ fontWeight: 700, color: 'var(--text-muted)' }}>
+                              {percent}% ({voteCount})
+                            </span>
+                          </div>
+                          <div style={{ width: '100%', height: '8px', borderRadius: '4px', background: 'rgba(255, 255, 255, 0.08)', overflow: 'hidden' }}>
+                            <div
+                              style={{
+                                width: `${percent}%`,
+                                height: '100%',
+                                borderRadius: '4px',
+                                background: isUserChoice ? 'linear-gradient(90deg, #6366f1, #818cf8)' : 'rgba(255, 255, 255, 0.25)',
+                                transition: 'width 0.4s ease',
+                              }}
+                            />
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+
+                {/* True / False Split */}
+                {currentQuestion.type === 'true_false' && (
+                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px' }}>
+                    <div style={{ padding: '12px', borderRadius: '8px', background: 'rgba(16, 185, 129, 0.15)', border: '1px solid #10b981', textAlign: 'center' }}>
+                      <div style={{ fontSize: '0.85rem', color: '#34d399', fontWeight: 700 }}>TRUE</div>
+                      <div style={{ fontSize: '1.5rem', fontWeight: 800 }}>
+                        {aggregated?.totalResponses ? Math.round(((aggregated.trueFalseCounts?.trueCount ?? 0) / aggregated.totalResponses) * 100) : 0}%
+                      </div>
+                      <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>
+                        {aggregated?.trueFalseCounts?.trueCount ?? 0} votes
+                      </div>
+                    </div>
+                    <div style={{ padding: '12px', borderRadius: '8px', background: 'rgba(239, 68, 68, 0.15)', border: '1px solid #ef4444', textAlign: 'center' }}>
+                      <div style={{ fontSize: '0.85rem', color: '#f87171', fontWeight: 700 }}>FALSE</div>
+                      <div style={{ fontSize: '1.5rem', fontWeight: 800 }}>
+                        {aggregated?.totalResponses ? Math.round(((aggregated.trueFalseCounts?.falseCount ?? 0) / aggregated.totalResponses) * 100) : 0}%
+                      </div>
+                      <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>
+                        {aggregated?.trueFalseCounts?.falseCount ?? 0} votes
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                {/* Rating Scale Average */}
+                {currentQuestion.type === 'rating_scale' && (
+                  <div style={{ textAlign: 'center', padding: '10px' }}>
+                    <div style={{ fontSize: '2rem', fontWeight: 800, color: '#fbbf24' }}>
+                      ⭐ {aggregated?.ratingAverage ?? 0} / {currentQuestion.maxRating || 5}
+                    </div>
+                    <div style={{ fontSize: '0.8rem', color: 'var(--text-muted)', marginTop: '4px' }}>
+                      Average from {aggregated?.totalResponses ?? 0} ratings
+                    </div>
+                  </div>
+                )}
               </div>
             )}
           </div>

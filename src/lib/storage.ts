@@ -240,9 +240,10 @@ export async function fetchPresentationBundle(code: string): Promise<{
         .maybeSingle();
 
       if (pData) {
+        const targetIds = pData.id === code ? [code] : [pData.id, code];
         const [respRes, partRes] = await Promise.all([
-          supabase.from('responses').select('*').eq('presentation_id', pData.id).order('created_at', { ascending: false }),
-          supabase.from('participants').select('*').eq('presentation_id', pData.id).order('joined_at', { ascending: false }),
+          supabase.from('responses').select('*').in('presentation_id', targetIds).order('created_at', { ascending: false }),
+          supabase.from('participants').select('*').or(`presentation_id.in.(${targetIds.join(',')}),room_code.eq.${code}`).order('joined_at', { ascending: false }),
         ]);
 
         const presentation: Presentation = {
@@ -252,17 +253,17 @@ export async function fetchPresentationBundle(code: string): Promise<{
           type: pData.type || (pData.id?.startsWith('survey_') ? 'survey' : 'presentation'),
           description: pData.description || '',
           surveySettings: pData.survey_settings || pData.surveySettings || undefined,
-          currentQuestionIndex: pData.current_question_index,
+          currentQuestionIndex: pData.current_question_index ?? 0,
           isLive: typeof pData.is_live === 'boolean' ? pData.is_live : true,
           isLocked: typeof pData.is_locked === 'boolean' ? pData.is_locked : false,
           lockForwardSlides: typeof pData.lock_forward_slides === 'boolean' ? pData.lock_forward_slides : false,
-          showResults: pData.show_results,
+          showResults: typeof pData.show_results === 'boolean' ? pData.show_results : true,
           questions: pData.questions,
           createdAt: pData.created_at,
           updatedAt: pData.updated_at,
         };
 
-        const responses: ResponseSubmission[] = (respRes.data || []).map((r: any) => ({
+        let responses: ResponseSubmission[] = (respRes.data || []).map((r: any) => ({
           id: r.id,
           presentationId: r.presentation_id,
           questionId: r.question_id,
@@ -277,13 +278,26 @@ export async function fetchPresentationBundle(code: string): Promise<{
         const participants: Participant[] = (partRes.data || []).map((p: any) => ({
           id: p.id,
           presentationId: p.presentation_id,
-          roomCode: p.room_code,
+          roomCode: p.room_code || code,
           firstName: p.first_name,
-          lastName: p.last_name,
-          whatsapp: p.whatsapp,
-          email: p.email,
+          lastName: p.last_name || '',
+          whatsapp: p.whatsapp || '',
+          email: p.email || '',
           joinedAt: p.joined_at,
         }));
+
+        // If Supabase returned 0 responses, check sync API cache
+        if (responses.length === 0) {
+          try {
+            const syncRes = await fetch(`/api/sync?code=${encodeURIComponent(code)}`);
+            if (syncRes.ok) {
+              const syncJson = await syncRes.json();
+              if (syncJson.responses?.length > 0) {
+                responses = syncJson.responses;
+              }
+            }
+          } catch {}
+        }
 
         return { presentation, responses, participants };
       }

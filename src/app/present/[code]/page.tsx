@@ -538,7 +538,7 @@ function PresenterLiveContent({
             </div>
 
             {/* Results Presentation Area */}
-            {!presentation.showResults ? (
+            {presentation.showResults === false ? (
               <div
                 className="glass-panel"
                 style={{
