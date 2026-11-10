@@ -80,13 +80,13 @@ function SurveyFormContent({ params }: { params: Promise<{ code: string }> }) {
   const [showConfirmModal, setShowConfirmModal] = useState(false);
   const [draftRestored, setDraftRestored] = useState(false);
 
-  // Pagination state: 15 questions per page
-  const QUESTIONS_PER_PAGE = 15;
+  // Pagination state: up to 20 questions display seamlessly on 1 page; larger assessments paginate by 15
+  const totalQuestions = survey?.questions?.length || 0;
+  const QUESTIONS_PER_PAGE = totalQuestions <= 20 ? Math.max(1, totalQuestions) : 15;
   const [currentPage, setCurrentPage] = useState(1);
 
   const questionRefs = useRef<Record<string, HTMLDivElement | null>>({});
 
-  const totalQuestions = survey?.questions?.length || 0;
   const totalPages = Math.max(1, Math.ceil(totalQuestions / QUESTIONS_PER_PAGE));
   const startIndex = (currentPage - 1) * QUESTIONS_PER_PAGE;
   const endIndex = Math.min(startIndex + QUESTIONS_PER_PAGE, totalQuestions);
@@ -352,10 +352,11 @@ function SurveyFormContent({ params }: { params: Promise<{ code: string }> }) {
     setSubmitError(null);
 
     try {
-      // Build participant profile
-      const safeWhatsapp = isAnonymous ? '' : whatsapp.trim();
+      // Build participant profile (extract from fields or custom survey questions)
+      const detectedName = fullName.trim() || (answers['bscic-q-name'] ? String(answers['bscic-q-name']).trim() : '');
+      const safeWhatsapp = isAnonymous ? '' : (whatsapp.trim() || (answers['bscic-q-phone'] ? String(answers['bscic-q-phone']).trim() : ''));
       const safeEmail = isAnonymous ? '' : email.trim();
-      const nameParts = (isAnonymous ? 'Anonymous Respondent' : fullName.trim()).split(' ');
+      const nameParts = (isAnonymous ? 'Anonymous Respondent' : (detectedName || 'Anonymous Respondent')).split(' ');
       const firstName = nameParts[0] || 'Anonymous';
       const lastName = nameParts.slice(1).join(' ');
 
@@ -401,7 +402,7 @@ function SurveyFormContent({ params }: { params: Promise<{ code: string }> }) {
             presentationId: survey.id,
             questionId: q.id,
             participantId,
-            participantName: isAnonymous ? 'Anonymous' : (fullName.trim() || 'Anonymous'),
+            participantName: isAnonymous ? 'Anonymous' : (detectedName || 'Anonymous'),
             participantWhatsapp: safeWhatsapp,
             participantEmail: safeEmail,
             value: stringValue,
@@ -613,64 +614,73 @@ function SurveyFormContent({ params }: { params: Promise<{ code: string }> }) {
               <CheckCircle2 size={36} color="#10b981" />
             </div>
 
-            <h1 style={{ fontSize: '1.6rem', fontWeight: 800, marginBottom: '8px' }}>
-              Response Recorded! 🎉
-            </h1>
-            <p style={{ color: 'var(--text-secondary)', fontSize: '1rem', marginBottom: '20px' }}>
-              {survey.title}
-            </p>
+            {(() => {
+              const isSurveyBangla = /[\u0980-\u09FF]/.test(survey.title || '') || /[\u0980-\u09FF]/.test(survey.description || '');
+              return (
+                <>
+                  <h1 style={{ fontSize: '1.6rem', fontWeight: 800, marginBottom: '8px' }}>
+                    {isSurveyBangla ? 'উত্তর সফলভাবে সংরক্ষিত হয়েছে! 🎉' : 'Response Recorded! 🎉'}
+                  </h1>
+                  <p style={{ color: 'var(--text-secondary)', fontSize: '1rem', marginBottom: '20px' }}>
+                    {survey.title}
+                  </p>
 
-            <div
-              style={{
-                background: 'rgba(255, 255, 255, 0.04)',
-                border: '1px solid var(--border-subtle)',
-                borderRadius: '12px',
-                padding: '20px',
-                marginBottom: '28px',
-                textAlign: 'left',
-                fontSize: '0.92rem',
-                lineHeight: 1.6,
-                color: 'var(--text-primary)',
-              }}
-            >
-              {survey.surveySettings?.thankYouMessage ||
-                'Thank you for submitting your feedback! Your answers have been successfully stored in the database.'}
-            </div>
+                  <div
+                    style={{
+                      background: 'rgba(255, 255, 255, 0.04)',
+                      border: '1px solid var(--border-subtle)',
+                      borderRadius: '12px',
+                      padding: '20px',
+                      marginBottom: '28px',
+                      textAlign: 'left',
+                      fontSize: '0.92rem',
+                      lineHeight: 1.6,
+                      color: 'var(--text-primary)',
+                    }}
+                  >
+                    {survey.surveySettings?.thankYouMessage ||
+                      (isSurveyBangla
+                        ? 'আপনার উত্তর সফলভাবে সংরক্ষিত হয়েছে। অংশগ্রহণের জন্য ধন্যবাদ!'
+                        : 'Thank you for submitting your feedback! Your answers have been successfully stored in the database.')}
+                  </div>
 
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
-              {survey.surveySettings?.allowMultipleSubmissions !== false && (
-                <button
-                  type="button"
-                  onClick={handleResetForAnotherResponse}
-                  className="btn-primary"
-                  style={{
-                    display: 'flex',
-                    alignItems: 'center',
-                    justifyContent: 'center',
-                    gap: '8px',
-                    padding: '12px',
-                    fontSize: '0.95rem',
-                  }}
-                >
-                  <RotateCcw size={16} /> Submit Another Response
-                </button>
-              )}
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+                    {survey.surveySettings?.allowMultipleSubmissions !== false && (
+                      <button
+                        type="button"
+                        onClick={handleResetForAnotherResponse}
+                        className="btn-primary"
+                        style={{
+                          display: 'flex',
+                          alignItems: 'center',
+                          justifyContent: 'center',
+                          gap: '8px',
+                          padding: '12px',
+                          fontSize: '0.95rem',
+                        }}
+                      >
+                        <RotateCcw size={16} /> {isSurveyBangla ? 'আরেকটি উত্তর জমা দিন' : 'Submit Another Response'}
+                      </button>
+                    )}
 
-              <Link
-                href="/"
-                className="btn-secondary"
-                style={{
-                  display: 'flex',
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                  gap: '8px',
-                  padding: '12px',
-                  fontSize: '0.95rem',
-                }}
-              >
-                Back to Homepage
-              </Link>
-            </div>
+                    <Link
+                      href="/"
+                      className="btn-secondary"
+                      style={{
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        gap: '8px',
+                        padding: '12px',
+                        fontSize: '0.95rem',
+                      }}
+                    >
+                      {isSurveyBangla ? 'মূল পাতায় ফিরে যান' : 'Back to Homepage'}
+                    </Link>
+                  </div>
+                </>
+              );
+            })()}
           </div>
         </main>
       </div>
@@ -1501,6 +1511,7 @@ function SurveyFormContent({ params }: { params: Promise<{ code: string }> }) {
               const absoluteIndex = startIndex + idx + 1;
               const hasError = Boolean(fieldErrors[q.id]);
               const currentAnswer = answers[q.id];
+              const isBanglaQuestion = /[\u0980-\u09FF]/.test(q.title || '');
 
               return (
                 <div
@@ -1534,7 +1545,7 @@ function SurveyFormContent({ params }: { params: Promise<{ code: string }> }) {
                           color: 'var(--accent-primary)',
                         }}
                       >
-                        Question {absoluteIndex}
+                        {isBanglaQuestion ? `প্রশ্ন ${absoluteIndex}` : `Question ${absoluteIndex}`}
                       </span>
                       {q.required && (
                         <span style={{ color: '#ef4444', fontWeight: 700, fontSize: '0.9rem' }} title="Required">
@@ -1614,7 +1625,9 @@ function SurveyFormContent({ params }: { params: Promise<{ code: string }> }) {
                     <div>
                       {q.maxSelections && (
                         <div style={{ fontSize: '0.78rem', color: 'var(--text-muted)', marginBottom: '10px' }}>
-                          Select up to {q.maxSelections} {q.maxSelections === 1 ? 'option' : 'options'}
+                          {isBanglaQuestion
+                            ? `সর্বোচ্চ ${q.maxSelections}টি অপশন নির্বাচন করুন`
+                            : `Select up to ${q.maxSelections} ${q.maxSelections === 1 ? 'option' : 'options'}`}
                         </div>
                       )}
                       <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
@@ -1668,7 +1681,7 @@ function SurveyFormContent({ params }: { params: Promise<{ code: string }> }) {
                       type="text"
                       value={currentAnswer || ''}
                       onChange={(e) => handleTextChange(q.id, e.target.value)}
-                      placeholder="Your answer..."
+                      placeholder={isBanglaQuestion ? 'এখানে আপনার উত্তর লিখুন...' : 'Your answer...'}
                       style={{
                         width: '100%',
                         padding: '12px 16px',
@@ -1776,7 +1789,7 @@ function SurveyFormContent({ params }: { params: Promise<{ code: string }> }) {
                           gap: '6px',
                         }}
                       >
-                        👍 True
+                        {isBanglaQuestion ? '👍 সত্য' : '👍 True'}
                       </button>
 
                       <button
@@ -1797,7 +1810,7 @@ function SurveyFormContent({ params }: { params: Promise<{ code: string }> }) {
                           gap: '6px',
                         }}
                       >
-                        👎 False
+                        {isBanglaQuestion ? '👎 মিথ্যা' : '👎 False'}
                       </button>
                     </div>
                   )}
